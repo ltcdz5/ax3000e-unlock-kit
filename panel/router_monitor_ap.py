@@ -16,7 +16,7 @@ SSHPORT = 22
 USER = "root"
 PASSWD = os.environ.get("ROUTER_PASSWD", "")
 WEBPORT = 8787
-INTERVAL = 2
+INTERVAL = 5
 MAX_POINTS = 300
 
 try:
@@ -33,6 +33,7 @@ history = {k: deque(maxlen=MAX_POINTS) for k in
            ["cpu", "mem_used_mb", "mem_total_mb", "temp", "rx", "tx", "conn", "load", "ts"]}
 last_net = {}
 last_stat = {}
+collect_ms = 0
 
 
 def ssh_connect():
@@ -131,7 +132,9 @@ def list_backups():
 
 
 def collect():
+    global collect_ms
     now = time.time()
+    t0 = now
     # 单次 SSH 往返拉回全部采集数据, 本地解析(替代原来的 5 次独立往返, 大幅降负载)
     raw = sh(
         "head -1 /proc/stat; echo '@@'; "
@@ -141,6 +144,8 @@ def collect():
         "cat /proc/net/tcp | wc -l; echo '@@'; "
         "cat /proc/loadavg"
     )
+    dt_ms = (time.time() - t0) * 1000
+    collect_ms = round(dt_ms) if collect_ms == 0 else round(collect_ms * 0.7 + dt_ms * 0.3)
     cpu_pct = 0.0
     parts = raw.split("@@")
     if len(parts) < 6:
@@ -256,6 +261,10 @@ def get_config():
     v6p = v6_raw.split("@@")
     cfg["ipv6_blocked"] = "BLOCKED" in (v6p[0] if v6p else "")
     cfg["ipv6_clients"] = int(v6p[1].strip()) if len(v6p) > 1 and v6p[1].strip().isdigit() else 0
+    # 可精简的米家云服务（停止后重启路由器自动恢复）
+    ps_raw = sh("ps w | grep -E 'messagingagent|mosquitto|xq_info_sync_mqtt' | grep -v grep")
+    svc_running = {n: (n in ps_raw) for n in ("messagingagent", "mosquitto", "xq_info_sync_mqtt")}
+    cfg["cloud_services"] = [{"name": n, "running": svc_running[n]} for n in ("messagingagent", "mosquitto", "xq_info_sync_mqtt")]
     # 在线设备（中继模式：实时 ARP 邻居表，DHCP 租约仅补主机名）
     leases = {}
     for line in sh("cat /tmp/dhcp.leases 2>/dev/null").splitlines():
@@ -391,7 +400,7 @@ def render_config_html(cfg):
 
     # DNS 缓存
     h.append('<div class="cfg-panel"><h3>DNS 缓存</h3><div class="tip">💡 缓存越大命中率越高。512-4096 合适，当前 ' + esc(cfg.get("cache_size","")) + '。</div><div class="desc">当前 cache-size = ' + esc(cfg.get("cache_size", "")) + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cache_set&quot;}"><input class="inp" name="size" value="' + esc(cfg.get("cache_size", "1024")) + '"><button class="btn" type="submit">保存</button></form></div>')
+             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cache_set&quot;}"><input class="inp" name="size" value="' + esc(cfg.get("cache_size", "1024")) + '"><button class="btn" type="submit">保存</button>' + frm("dns_stats", btn_txt="查看命中率", btn_cls="btn gray") + '</form></div>')
 
     # 去广告
     ad_on = cfg.get("adblock_enabled", True)
@@ -481,6 +490,15 @@ def render_config_html(cfg):
     h.append('<div class="cfg-panel"><h3>配置备份</h3><div class="tip">💡 一键打包 /etc/config、dnsmasq 配置、定时任务、自愈脚本与去广告列表，拉回本机保存。重启/升级固件前建议先备份。</div>' +
              '<div class="row">' + frm("backup", btn_txt="立即备份", btn_cls="btn green") + '</div>' +
              ('<div class="list">' + bl + '</div>' if bl else '<div class="desc">暂无备份，点击上方按钮创建第一个</div>') + '</div>')
+
+    # 服务精简
+    svcs = ""
+    for s in cfg.get("cloud_services", []):
+        svcs += ('<div class="item"><span class="val">' + s["name"] + '</span><span style="display:flex;gap:8px;align-items:center">' +
+                 ('<span class="badge on">运行中</span>' if s["running"] else '<span class="badge off">已停止</span>') +
+                 (frm("svc_stop", {"name": s["name"]}, confirm="停止 " + s["name"] + "？重启路由器前不会自动恢复", btn_txt="停止", btn_cls="btn red") if s["running"]
+                  else frm("svc_start", {"name": s["name"]}, btn_txt="启动", btn_cls="btn gray")) + '</span></div>')
+    h.append('<div class="cfg-panel"><h3>服务精简（降负载）</h3><div class="tip">💡 这三个是米家 App 远程控制用的云服务，自用可停，重启路由器后自动恢复。停用期间米家远程/智能联动不可用；管理页(nginx)与系统日志不受影响。</div><div class="list">' + svcs + '</div></div>')
 
     # 系统操作
     h.append('<div class="cfg-panel"><h3>系统操作</h3><div class="tip">💡 重启路由器(2秒后执行) · 需等待约2分钟恢复。中继模式下重启不影响上级网络。</div><div class="row">' +
@@ -658,6 +676,33 @@ def do_action(action, params=None):
             return "已取消：需确认（confirm=yes）才执行重启"
         sh("(sleep 2; reboot) &")
         return "路由器 2 秒后重启，请等待约 2 分钟"
+    if action in ("svc_stop", "svc_start"):
+        name = params.get("name", "")
+        scripts = {"messagingagent": "messagingagent.sh", "mosquitto": "mosquitto", "xq_info_sync_mqtt": "xq_info_sync_mqtt"}
+        if name not in scripts:
+            return "未知服务"
+        if action == "svc_stop":
+            sh("/etc/init.d/%s stop 2>/dev/null; killall %s 2>/dev/null" % (scripts[name], name))
+            return "已停止 " + name + "（重启路由器后自动恢复）"
+        sh("/etc/init.d/%s start 2>/dev/null" % scripts[name])
+        return "已启动 " + name + "（若未起来请重启路由器）"
+    if action == "dns_stats":
+        sh("kill -USR1 $(pidof dnsmasq)")
+        time.sleep(1.5)
+        lines = sh("tail -n 30 /tmp/messages").splitlines()
+        fwd = local = csize = None
+        for l in lines:
+            m1 = re.search(r"queries forwarded (\d+), queries answered locally (\d+)", l)
+            if m1:
+                fwd, local = int(m1.group(1)), int(m1.group(2))
+            m2 = re.search(r"cache size (\d+)", l)
+            if m2:
+                csize = int(m2.group(1))
+        if fwd is None or local is None:
+            return "未读到 dnsmasq 统计，请稍后重试"
+        total = fwd + local
+        rate = (local * 100.0 / total) if total else 0
+        return "缓存命中率 %.1f%%（本地应答 %d / 转发 %d · 缓存 %s 条）自上次开机累计" % (rate, local, fwd, csize)
     return "未知操作"
 
 
@@ -724,6 +769,7 @@ a.dl:hover{text-decoration:underline}
  <span class="chip"><span class="dot" id="chip-dot"></span>面板 <b id="chip-ssh">连接中</b></span>
  <span class="chip">运行 <b>%UPTIME%</b></span>
  <span class="chip">负载 <b id="chip-load">--</b></span>
+ <span class="chip">采集开销 <b id="chip-collect">--</b></span>
  <span class="chip">SSH自愈 <b>%AUTOSSH%</b></span>
  <span class="chip">IPv6 <b>%IPV6%</b></span>
 </div>
@@ -806,8 +852,8 @@ function fmtMB(m){return m>=1024?(m/1024).toFixed(1)+' GB':Math.round(m)+' MB';}
 function refresh(){
  fetch('/api').then(function(r){return r.json();}).then(function(d){
   var L=d.latest;
-  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot'),cl=document.getElementById('chip-load');
-  if(cs)cs.textContent='在线';if(cd)cd.className='dot ok';if(cl)cl.textContent=L.load;
+  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot'),cl=document.getElementById('chip-load'),cc=document.getElementById('chip-collect');
+  if(cs)cs.textContent='在线';if(cd)cd.className='dot ok';if(cl)cl.textContent=L.load;if(cc)cc.textContent=L.collect_ms+' ms';
   document.getElementById('c-cpu').textContent=L.cpu+'%';
   var sc=document.getElementById('s-cpu');sc.textContent=L.cpu<50?'空闲':(L.cpu<85?'中载':'高载');sc.className='s '+(L.cpu<50?'ok':(L.cpu<85?'warn':'bad'));
   var pct=L.mem_total_mb>0?Math.round(L.mem_used_mb/L.mem_total_mb*100):0;
@@ -863,7 +909,8 @@ class Handler(BaseHTTPRequestHandler):
                                 "rx": history["rx"][-1] if history["rx"] else 0,
                                 "tx": history["tx"][-1] if history["tx"] else 0,
                                 "conn": history["conn"][-1] if history["conn"] else 0,
-                                "load": history["load"][-1] if history["load"] else 0}}
+                                "load": history["load"][-1] if history["load"] else 0,
+                                "collect_ms": collect_ms}}
             self._send(200, d)
         elif self.path.startswith("/download/"):
             name = os.path.basename(urllib.parse.unquote(self.path[len("/download/"):]))
