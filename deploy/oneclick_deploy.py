@@ -45,7 +45,7 @@ def step(n, title):
 
 # ============ 1. SSH 检测/解锁引导 ============
 step(1, "SSH 连接检测: %s" % IP)
-print("尝试 root/admin ...")
+print("尝试 root 用户连接（密码来自环境变量 ROUTER_PASSWD）...")
 ssh = ssh_connect()
 if not ssh:
     print("""

@@ -195,7 +195,7 @@ def get_config():
     # 静态绑定（dhcp host）
     binds = []
     cur = {}
-    for line in sh("uci show dhcp 2>/dev/null | grep 'host\['").splitlines():
+    for line in sh(r"uci show dhcp 2>/dev/null | grep 'host\['").splitlines():
         m = re.match(r"dhcp\.@host\[(\d+)\]\.(\w+)='(.*)'", line.strip())
         if m:
             cur.setdefault(m.group(1), {})[m.group(2)] = m.group(3)
@@ -208,7 +208,7 @@ def get_config():
     # 防火墙规则
     fw_rules = []
     cur = {}
-    for line in sh("uci show firewall 2>/dev/null | grep '@rule\['").splitlines():
+    for line in sh(r"uci show firewall 2>/dev/null | grep '@rule\['").splitlines():
         m = re.match(r"firewall\.@rule\[(\d+)\]\.(\w+)='(.*)'", line.strip())
         if m:
             cur.setdefault(m.group(1), {})[m.group(2)] = m.group(3)
@@ -824,7 +824,7 @@ function renderCfgBody(d){
     '<div class="row">5G 信道 '+asel+'<button class="btn" data-act="wifi_channel" data-band="5g" data-inp="a-ch">切换5G信道</button></div>'+
     '<div class="row">2.4G 信道 '+gsel+'<button class="btn" data-act="wifi_channel" data-band="2g" data-inp="g-ch">切换2.4G信道</button></div>',
     '');
-  h+=panel('SSH 解锁',badge(d.ssh),'root/admin · 开机自愈 '+(d.auto_ssh?'已开':'已关')+'。别升级固件（1.0.24）否则全丢。','','','');
+  h+=panel('SSH 解锁',badge(d.ssh),'root · 开机自愈 '+(d.auto_ssh?'已开':'已关')+'。别升级固件（1.0.24）否则全丢。','','','');
   // 设备管理
   var dv='';d.devices.forEach(function(x){dv+='<div class="item"><span class="val">'+x.host+'</span><span class="val">'+x.ip+'</span><span class="val">'+x.mac+'</span></div>';});
   h+=panel('在线设备',d.devices.length+' 台','当前 DHCP 分配的设备','<div class="list">'+dv+'</div>','');

@@ -6,7 +6,7 @@
 - 中继模式下已移除: QoS / 端口转发 / 防火墙规则 / DHCP租期 / UPnP / 静态绑定（均由上级路由器管理）
 用法: python router_monitor_ap.py
 """
-import sys, json, time, threading, argparse, re
+import sys, os, json, time, threading, argparse, re
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from collections import deque
@@ -14,7 +14,7 @@ from collections import deque
 HOST = "192.168.2.106"
 SSHPORT = 22
 USER = "root"
-PASSWD = os.environ.get("ROUTER_PASSWD", "<改成你的路由器SSH密码>")
+PASSWD = os.environ.get("ROUTER_PASSWD", "")
 WEBPORT = 8787
 INTERVAL = 2
 MAX_POINTS = 300
@@ -30,7 +30,7 @@ ssh_lock = threading.Lock()
 data_lock = threading.Lock()
 
 history = {k: deque(maxlen=MAX_POINTS) for k in
-           ["cpu", "mem_used_mb", "mem_total_mb", "temp", "rx", "tx", "conn", "ts"]}
+           ["cpu", "mem_used_mb", "mem_total_mb", "temp", "rx", "tx", "conn", "load", "ts"]}
 last_net = {}
 last_stat = {}
 
@@ -61,6 +61,75 @@ def sh(cmd, timeout=10):
         return ""
 
 
+def sh_write(cmd, data, timeout=15):
+    """执行命令并通过 stdin 写入数据(避免命令行拼接的引号/注入问题)，成功返回 True"""
+    global ssh_client
+    with ssh_lock:
+        for _ in range(2):
+            try:
+                if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
+                    ssh_client = ssh_connect()
+                stdin, stdout, stderr = ssh_client.exec_command(cmd, timeout=timeout)
+                stdin.write(data)
+                stdin.channel.shutdown_write()
+                stdout.read()
+                return True
+            except Exception:
+                try:
+                    ssh_client = ssh_connect()
+                except Exception:
+                    time.sleep(2)
+        return False
+
+
+BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backups")
+
+
+def make_backup():
+    """路由器配置打包 → cat 经 SSH 拉回本地 backups/ 目录，返回文件名或 None"""
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    remote = "/tmp/panel_backup_%s.tar.gz" % ts
+    global ssh_client
+    with ssh_lock:
+        try:
+            if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
+                ssh_client = ssh_connect()
+            stdin, stdout, stderr = ssh_client.exec_command(
+                "tar czf %s -C / etc/config etc/crontabs/root tmp/dnsmasq.d data/auto_ssh data/upstreams.conf data/adblock.hosts 2>/dev/null; wc -c < %s" % (remote, remote),
+                timeout=40)
+            size = stdout.read().decode().strip()
+            if not size.isdigit() or int(size) == 0:
+                return None
+            stdin2, stdout2, stderr2 = ssh_client.exec_command("cat " + remote, timeout=60)
+            blob = stdout2.read()
+            ssh_client.exec_command("rm -f " + remote)
+            if not blob:
+                return None
+            os.makedirs(BACKUP_DIR, exist_ok=True)
+            fn = "router_backup_%s.tar.gz" % ts
+            with open(os.path.join(BACKUP_DIR, fn), "wb") as f:
+                f.write(blob)
+            return fn
+        except Exception:
+            return None
+
+
+def list_backups():
+    """本地 backups/ 目录里的历史备份(最新在前, 最多8条)"""
+    if not os.path.isdir(BACKUP_DIR):
+        return []
+    items = []
+    for fn in os.listdir(BACKUP_DIR):
+        if fn.endswith(".tar.gz"):
+            try:
+                st = os.stat(os.path.join(BACKUP_DIR, fn))
+                items.append({"name": fn, "size": st.st_size, "mtime": st.st_mtime})
+            except OSError:
+                pass
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return items[:8]
+
+
 def collect():
     now = time.time()
     # 单次 SSH 往返拉回全部采集数据, 本地解析(替代原来的 5 次独立往返, 大幅降负载)
@@ -69,11 +138,12 @@ def collect():
         "grep -E 'MemTotal|MemFree|Buffers|^Cached' /proc/meminfo; echo '@@'; "
         "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null; echo '@@'; "
         "grep br-lan /proc/net/dev; echo '@@'; "
-        "cat /proc/net/tcp | wc -l"
+        "cat /proc/net/tcp | wc -l; echo '@@'; "
+        "cat /proc/loadavg"
     )
     cpu_pct = 0.0
     parts = raw.split("@@")
-    if len(parts) < 5:
+    if len(parts) < 6:
         return
 
     st = parts[0].strip()
@@ -130,6 +200,14 @@ def collect():
     if tc.isdigit():
         conn = int(tc) - 1
 
+    load = 0.0
+    lp = parts[5].strip().split()
+    if lp:
+        try:
+            load = float(lp[0])
+        except ValueError:
+            pass
+
     with data_lock:
         history["cpu"].append(round(cpu_pct, 1))
         history["mem_used_mb"].append(mem_used_mb)
@@ -138,6 +216,7 @@ def collect():
         history["rx"].append(round(rx_rate, 1))
         history["tx"].append(round(tx_rate, 1))
         history["conn"].append(conn)
+        history["load"].append(round(load, 2))
         history["ts"].append(now)
 
 
@@ -165,9 +244,18 @@ def get_config():
     cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip() for l in custom.splitlines() if l.startswith("address=/")]
     # 服务状态
     cfg["ssh"] = "dropbear" in sh("ps | grep dropbear | grep -v grep")
-    cfg["auto_ssh"] = sh("test -f /data/auto_ssh/auto_ssh.sh && echo y") == "y"
+    auto_ssh_raw = sh("test -f /data/auto_ssh/auto_ssh.sh && sed -n 2p /data/auto_ssh/auto_ssh.sh 2>/dev/null")
+    cfg["auto_ssh"] = bool(auto_ssh_raw.strip())
+    vm = re.search(r"v\d+\s*\([^)]*\)", auto_ssh_raw)
+    cfg["auto_ssh_ver"] = vm.group(0) if vm else ""
     cfg["uptime"] = sh("uptime").split(",")[0].strip() if sh("uptime") else ""
     cfg["temp"] = history["temp"][-1] if history["temp"] else 0
+    # IPv6 拦截状态（全局拦截=ip6tables 规则; 设备实际使用数=非fe80邻居）
+    v6_raw = sh("ip6tables -C FORWARD -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null && echo BLOCKED; echo @@; "
+                "ip -6 neigh show dev br-lan 2>/dev/null | grep lladdr | grep -cv '^fe80'")
+    v6p = v6_raw.split("@@")
+    cfg["ipv6_blocked"] = "BLOCKED" in (v6p[0] if v6p else "")
+    cfg["ipv6_clients"] = int(v6p[1].strip()) if len(v6p) > 1 and v6p[1].strip().isdigit() else 0
     # 在线设备（中继模式：实时 ARP 邻居表，DHCP 租约仅补主机名）
     leases = {}
     for line in sh("cat /tmp/dhcp.leases 2>/dev/null").splitlines():
@@ -199,6 +287,17 @@ def get_config():
     # 定时任务（#panel 标记的行）
     crontab = sh("cat /etc/crontabs/root 2>/dev/null")
     cfg["cron_tasks"] = [l for l in crontab.splitlines() if l.startswith("#panel")]
+    # LED 定时计划（从 crontab 的 led_ctl 行解析）
+    led_on_t, led_off_t = "", ""
+    for l in crontab.splitlines():
+        lm = re.match(r"(\d+)\s+(\d+)\s+\*\s+\*\s+\*\s+.*/usr/sbin/led_ctl\s+(led_on|led_off)", l)
+        if lm:
+            t = "%02d:%02d" % (int(lm.group(2)), int(lm.group(1)))
+            if lm.group(3) == "led_on":
+                led_on_t = t
+            else:
+                led_off_t = t
+    cfg["led_schedule"] = {"on": led_on_t, "off": led_off_t}
     # LED（用官方 XLED 状态, 与 led_ctl 一致; 读 uci 而非直接写 sysfs）
     led_b = sh("uci get xiaoqiang.common.XLED 2>/dev/null")
     cfg["led_blue"] = led_b.strip() == "1"
@@ -228,6 +327,8 @@ def get_config():
     # 中继模式信息
     cfg["mode"] = "ap"
     cfg["gateway"] = sh("ip route show default 2>/dev/null | awk '{print $3}'").strip() or "192.168.2.1"
+    # 本地历史备份列表（不走 SSH）
+    cfg["backups"] = list_backups()
     return cfg
 
 
@@ -272,10 +373,13 @@ def frm(action, params=None, confirm=None, fields=None, btn_txt="执行", btn_cl
 def render_config_html(cfg):
     h = []
     # 模式提示
-    h.append('<div class="cfg-panel" style="grid-column:1/-1;background:#1a2a1a;border-color:#2a4a2a"><h3>📡 当前模式：有线中继 (AP)</h3>' +
-             '<div class="tip" style="background:#1a2a1a;border-left-color:#4caf50">中继模式下，本路由器仅负责 WiFi 接入 + DNS 去广告。' +
-             'IP/DHCP/NAT/防火墙/QoS/端口转发/UPnP 均由上级路由器 ' + esc(cfg.get("gateway","192.168.2.1")) + ' 管理，本面板不提供这些功能。</div>' +
-             '<div class="desc">运行 ' + esc(cfg.get("uptime","")) + ' · 温度 ' + esc(cfg.get("temp",0)) + '°C · SSH ' + ('已开' if cfg.get("ssh") else '已关') + ' · auto_ssh开机自愈 ' + ('已开' if cfg.get("auto_ssh") else '已关') + '</div></div>')
+    h.append('<div class="cfg-panel" style="grid-column:1/-1"><h3>📡 当前模式：有线中继 (AP) <span class="badge ' + ('on' if cfg.get("ssh") else 'off') + '">SSH ' + ('在线' if cfg.get("ssh") else '离线') + '</span></h3>' +
+             '<div class="tip">中继模式下，本路由器仅负责 WiFi 接入 + DNS 去广告。' +
+             'IP/DHCP/NAT/防火墙/QoS/端口转发/UPnP 均由上级路由器 ' + esc(cfg.get("gateway", "192.168.2.1")) + ' 管理，本面板不提供这些功能。</div>' +
+             '<div class="desc">运行 ' + esc(cfg.get("uptime", "")) + ' · 温度 ' + esc(cfg.get("temp", 0)) + '°C · ' +
+             'SSH自愈 ' + ('<span class="ok">' + esc(cfg.get("auto_ssh_ver") or "已启用") + '</span>' if cfg.get("auto_ssh") else '<span class="bad">未检测到</span>') + ' · ' +
+             'IPv6 ' + ('<span class="ok">已拦截</span>' if cfg.get("ipv6_blocked") else '<span class="warn">未拦截</span>') +
+             '（' + str(cfg.get("ipv6_clients", 0)) + ' 台设备在用 IPv6）</div></div>')
 
     # DNS 上游
     ups = ""
@@ -347,7 +451,16 @@ def render_config_html(cfg):
              '<div class="list">' + ct + '</div></div>')
 
     # LED
-    h.append('<div class="cfg-panel"><h3>LED 指示灯</h3><div class="tip">💡 关闭指示灯（路由器灯灭，不影响功能）。</div><div class="desc">' + ('亮' if cfg.get("led_blue") else "灭") + '</div><div class="row">' + frm("led_toggle", btn_txt=("关闭" if cfg.get("led_blue") else "开启")) + '</div></div>')
+    sched = cfg.get("led_schedule", {})
+    on_t = sched.get("on") or "08:00"
+    off_t = sched.get("off") or "00:00"
+    h.append('<div class="cfg-panel"><h3>LED 指示灯 <span class="badge ' + ('on' if cfg.get("led_blue") else 'off') + '">' + ('亮' if cfg.get("led_blue") else '灭') + '</span></h3>' +
+             '<div class="tip">💡 手动开关 + 定时计划。当前计划：' + esc(sched.get("on") or "--:--") + ' 开灯 / ' + esc(sched.get("off") or "--:--") + ' 关灯（定时任务会覆盖手动操作）。</div>' +
+             '<div class="row">' + frm("led_toggle", btn_txt=("关灯" if cfg.get("led_blue") else "开灯")) + '</div>' +
+             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;led_schedule&quot;}">' +
+             '开灯 <input class="inp" name="on" value="' + esc(on_t) + '" style="width:78px" placeholder="HH:MM">' +
+             '关灯 <input class="inp" name="off" value="' + esc(off_t) + '" style="width:78px" placeholder="HH:MM">' +
+             '<button class="btn gray" type="submit">更新定时</button></form></div>')
 
     # 性能优化 / DNS测速
     h.append('<div class="cfg-panel"><h3>DNS 测速优化</h3><div class="tip">💡 对 DNS 上游测速，用最快的几个。硬件 NAT 由上级路由器负责。</div>' +
@@ -360,7 +473,14 @@ def render_config_html(cfg):
              '<div id="nt-result" style="margin-top:10px;font-family:monospace;font-size:12px;white-space:pre-line;line-height:1.8"></div></div>')
 
     # 配置备份
-    h.append('<div class="cfg-panel"><h3>配置备份</h3><div class="tip">💡 配置存在路由器 /etc/config/。重启/升级前建议先备份。</div><div class="row">' + frm("backup", btn_txt="查看配置摘要", btn_cls="btn gray") + '</div></div>')
+    bl = ""
+    for b in cfg.get("backups", []):
+        mt = time.strftime("%m-%d %H:%M", time.localtime(b["mtime"]))
+        kb = "%.0f KB" % (b["size"] / 1024.0) if b["size"] < 1024 * 1024 else "%.1f MB" % (b["size"] / 1048576.0)
+        bl += '<div class="item"><span class="val">' + esc(b["name"]) + '</span><span style="display:flex;gap:10px;align-items:center"><span style="color:#64748b;font-size:11px">' + mt + ' · ' + kb + '</span><a class="dl" href="/download/' + urllib.parse.quote(b["name"]) + '">下载</a></span></div>'
+    h.append('<div class="cfg-panel"><h3>配置备份</h3><div class="tip">💡 一键打包 /etc/config、dnsmasq 配置、定时任务、自愈脚本与去广告列表，拉回本机保存。重启/升级固件前建议先备份。</div>' +
+             '<div class="row">' + frm("backup", btn_txt="立即备份", btn_cls="btn green") + '</div>' +
+             ('<div class="list">' + bl + '</div>' if bl else '<div class="desc">暂无备份，点击上方按钮创建第一个</div>') + '</div>')
 
     # 系统操作
     h.append('<div class="cfg-panel"><h3>系统操作</h3><div class="tip">💡 重启路由器(2秒后执行) · 需等待约2分钟恢复。中继模式下重启不影响上级网络。</div><div class="row">' +
@@ -505,14 +625,34 @@ def do_action(action, params=None):
     if action == "led_toggle":
         cur = sh("uci get xiaoqiang.common.XLED 2>/dev/null").strip()
         if cur == "1":
-            sh("/usr/sbin/led_ctl led_off")
-            return "LED 已关闭（灯灭）"
-        else:
-            sh("/usr/sbin/led_ctl led_on")
-            return "LED 已开启"
+            sh("/usr/sbin/led_ctl led_off; uci set xiaoqiang.common.XLED=0; uci commit xiaoqiang")
+            return "LED 已关闭（若处于定时开灯时段，会被定时任务重新打开）"
+        sh("/usr/sbin/led_ctl led_on; uci set xiaoqiang.common.XLED=1; uci commit xiaoqiang")
+        return "LED 已开启"
+    if action == "led_schedule":
+        on_t = params.get("on", "").strip()
+        off_t = params.get("off", "").strip()
+        for t in (on_t, off_t):
+            if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", t):
+                return "时间格式须为 HH:MM（如 08:00）"
+        def _cron(t):
+            hh, mm = t.split(":")
+            return mm + " " + hh
+        lines = sh("cat /etc/crontabs/root 2>/dev/null").splitlines()
+        if not lines:
+            return "读取 crontab 失败"
+        keep = [l for l in lines if "led_ctl" not in l]
+        keep.append("%s * * * /usr/sbin/led_ctl led_on > /dev/null 2>&1" % _cron(on_t))
+        keep.append("%s * * * /usr/sbin/led_ctl led_off > /dev/null 2>&1" % _cron(off_t))
+        if not sh_write("cat > /etc/crontabs/root", "\n".join(keep) + "\n"):
+            return "写入 crontab 失败"
+        sh("/etc/init.d/cron restart")
+        return "LED 定时已更新：%s 开灯 / %s 关灯" % (on_t, off_t)
     if action == "backup":
-        total = sh("uci show 2>/dev/null | wc -l")
-        return "配置项共 " + total + " 行（完整配置在路由器 /etc/config/）"
+        fn = make_backup()
+        if fn:
+            return "备份完成：" + fn + "（在下方备份列表可下载）"
+        return "备份失败：请检查 SSH 连接后重试"
     if action == "reboot":
         if params.get("confirm") != "yes":
             return "已取消：需确认（confirm=yes）才执行重启"
@@ -524,44 +664,69 @@ def do_action(action, params=None):
 PAGE = """<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8"><title>小米路由器 中继模式 监控+配置中心</title>
 <style>
-body{font-family:'Microsoft YaHei','Segoe UI',sans-serif;background:#14161a;color:#e8eaed;margin:0;padding:20px}
-h1{font-size:20px;margin:0 0 4px}
-.sub{color:#8a9099;font-size:12px;margin-bottom:16px}
+*{box-sizing:border-box}
+:root{--bg0:#0d1117;--bg1:#101820;--card:#161d27;--card2:#1a2330;--line:#263040;--tx:#e8edf4;--tx2:#94a3b8;--acc:#38bdf8;--acc2:#0ea5e9;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
+body{font-family:'Microsoft YaHei','Segoe UI',sans-serif;background:radial-gradient(1100px 560px at 85% -10%,rgba(14,74,110,.35),transparent),radial-gradient(900px 520px at -10% 110%,rgba(6,78,59,.28),transparent),linear-gradient(160deg,var(--bg0),var(--bg1));background-attachment:fixed;color:var(--tx);margin:0;padding:22px;min-height:100vh}
+.wrap{max-width:1320px;margin:0 auto}
+h1{font-size:21px;margin:0 0 4px;letter-spacing:.5px}
+.sub{color:var(--tx2);font-size:12px;margin-bottom:14px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.chip{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--tx2);background:rgba(255,255,255,.03);border:1px solid var(--line);padding:5px 13px;border-radius:99px}
+.chip b{color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--tx2)}
+.dot.ok{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+.dot.bad{background:var(--bad);box-shadow:0 0 7px var(--bad)}
 .tabs{display:flex;gap:8px;margin-bottom:16px}
-.tab{padding:8px 20px;border-radius:8px;cursor:pointer;background:#1f242c;border:1px solid #2a3038}
-.tab.active{background:#2d5d8a;border-color:#3a7ab5}
+.tab{padding:8px 24px;border-radius:10px;cursor:pointer;background:rgba(255,255,255,.03);border:1px solid var(--line);color:var(--tx2);font-size:13px;transition:all .2s;user-select:none}
+.tab:hover{color:var(--tx);border-color:#3a4a60}
+.tab.active{background:linear-gradient(135deg,#0c4a6e,#075985);border-color:#0284c7;color:#fff;box-shadow:0 2px 14px rgba(2,132,199,.35)}
 .cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-.card{background:#1f242c;border-radius:12px;padding:14px 18px;min-width:130px;border:1px solid #2a3038}
+.card{background:linear-gradient(160deg,var(--card),var(--card2));border-radius:14px;padding:14px 18px;min-width:138px;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.28);transition:all .2s}
+.card:hover{transform:translateY(-2px);border-color:#3b5675}
 .card .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
-.card .l{font-size:12px;color:#8a9099;margin-top:5px}
+.card .l{font-size:12px;color:var(--tx2);margin-top:5px}
 .card .s{font-size:11px;margin-top:3px}
-.ok{color:#66bb6a}.warn{color:#ffa726}.bad{color:#ef5350}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.panel{background:#1f242c;border-radius:12px;padding:12px 14px;border:1px solid #2a3038}
-.panel h3{font-size:13px;margin:0 0 6px;color:#8a9099}
+.panel{background:linear-gradient(160deg,var(--card),var(--card2));border-radius:14px;padding:14px 16px;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.28)}
+.panel h3{font-size:13px;margin:0 0 8px;color:var(--tx2);display:flex;justify-content:space-between}
 canvas{width:100%;height:150px;display:block}
-.cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px}
-.cfg-panel{background:#1f242c;border-radius:12px;padding:16px;border:1px solid #2a3038}
-.cfg-panel h3{font-size:14px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}
-.badge{font-size:11px;padding:3px 10px;border-radius:20px}
-.badge.on{background:#1b3a24;color:#66bb6a}.badge.off{background:#3a1b1b;color:#ef5350}
-.tip{font-size:11px;color:#9fc3e8;background:#1b2430;border-left:3px solid #3a7ab5;padding:6px 10px;border-radius:4px;margin-bottom:10px;line-height:1.5}
-.cfg-panel .desc{font-size:12px;color:#8a9099;margin-bottom:10px}
+.cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(370px,1fr));gap:14px}
+.cfg-panel{background:linear-gradient(160deg,var(--card),var(--card2));border-radius:14px;padding:16px 18px;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.28)}
+.cfg-panel h3{font-size:14px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600}
+.badge.on{background:#123527;color:var(--ok);border:1px solid #1f5c40}
+.badge.off{background:#3a1b1f;color:var(--bad);border:1px solid #6e2730}
+.tip{font-size:11px;color:#a5c8e8;background:#122131;border-left:3px solid var(--acc2);padding:7px 10px;border-radius:6px;margin-bottom:10px;line-height:1.6}
+.cfg-panel .desc{font-size:12px;color:var(--tx2);margin-bottom:10px}
 .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
-.btn{padding:6px 14px;border-radius:6px;border:1px solid #3a7ab5;background:#2d5d8a;color:#fff;cursor:pointer;font-size:12px}
-.btn:hover{background:#3a7ab5}
-.btn.gray{background:#3a4149;border-color:#4a525c}.btn.gray:hover{background:#4a525c}
-.btn.red{border-color:#8a2d2d;background:#6b2323}.btn.red:hover{background:#8a2d2d}
-.btn.green{border-color:#2d8a4a;background:#236b33}.btn.green:hover{background:#2d8a4a}
-.inp{padding:6px 10px;border-radius:6px;border:1px solid #3a4149;background:#161a20;color:#e8eaed;font-size:12px;width:110px}
+.btn{padding:6px 14px;border-radius:8px;border:1px solid #0284c7;background:linear-gradient(135deg,#0c4a6e,#075985);color:#fff;cursor:pointer;font-size:12px;transition:all .15s}
+.btn:hover{filter:brightness(1.25);box-shadow:0 2px 10px rgba(2,132,199,.3)}
+.btn.gray{background:#2a333f;border-color:#3c4856}
+.btn.red{border-color:#b3454f;background:linear-gradient(135deg,#5f1f27,#7f2733)}
+.btn.green{border-color:#2f9e57;background:linear-gradient(135deg,#14532d,#166534)}
+.inp{padding:6px 10px;border-radius:8px;border:1px solid #334155;background:#0f1520;color:var(--tx);font-size:12px;width:110px;outline:none;transition:all .15s}
+.inp:focus{border-color:var(--acc2);box-shadow:0 0 0 2px rgba(2,132,199,.22)}
 .inp.wide{width:180px}
-.val{font-family:monospace;font-size:12px;color:#9fc3e8;background:#161a20;padding:4px 8px;border-radius:6px;display:inline-block;margin:2px}
-.list{max-height:150px;overflow-y:auto;margin-top:8px}
-.list .item{display:flex;justify-content:space-between;align-items:center;padding:4px 6px;border-bottom:1px solid #2a3038;font-size:12px}
-.msg{position:fixed;bottom:20px;right:20px;background:#2d5d8a;color:#fff;padding:10px 18px;border-radius:8px;display:none;font-size:13px;z-index:9}
+.val{font-family:Consolas,monospace;font-size:12px;color:#a5c8e8;background:#0f1520;padding:4px 8px;border-radius:6px;display:inline-block;margin:2px;border:1px solid #1f2c3d}
+.list{max-height:160px;overflow-y:auto;margin-top:8px;border-radius:8px}
+.list .item{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid #1f2937;font-size:12px}
+.list .item:hover{background:rgba(255,255,255,.04)}
+.msg{position:fixed;bottom:20px;right:20px;background:rgba(12,74,110,.94);color:#fff;padding:11px 20px;border-radius:10px;display:none;font-size:13px;z-index:9;border:1px solid #0284c7;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+a.dl{color:var(--acc);text-decoration:none;font-size:12px}
+a.dl:hover{text-decoration:underline}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
 </style></head><body>
+<div class="wrap">
 <h1>小米路由器 有线中继模式 监控 + 配置中心</h1>
 <div class="sub">SSH: %HOST% · 中继模式（AP）· DNS去广告 + WiFi管理 · 温度阈值：绿&lt;85 / 橙85-90 / 红&gt;90</div>
+<div class="chips">
+ <span class="chip"><span class="dot" id="chip-dot"></span>面板 <b id="chip-ssh">连接中</b></span>
+ <span class="chip">运行 <b>%UPTIME%</b></span>
+ <span class="chip">负载 <b id="chip-load">--</b></span>
+ <span class="chip">SSH自愈 <b>%AUTOSSH%</b></span>
+ <span class="chip">IPv6 <b>%IPV6%</b></span>
+</div>
 <div class="tabs">
  <div class="tab active" id="tb-mon" onclick="switchTab('mon')">性能监控</div>
  <div class="tab" id="tb-cfg" onclick="switchTab('cfg')">配置中心</div>
@@ -637,14 +802,16 @@ function draw(id,data,color,fill,ymax,unit){
  ctx.fillText(txt,lx-70,ly>20?ly-8:ly+14);
 }
 function fmtKB(k){return k>=1024?(k/1024).toFixed(1)+' MB/s':Math.round(k)+' KB/s';}
+function fmtMB(m){return m>=1024?(m/1024).toFixed(1)+' GB':Math.round(m)+' MB';}
 function refresh(){
  fetch('/api').then(function(r){return r.json();}).then(function(d){
   var L=d.latest;
+  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot'),cl=document.getElementById('chip-load');
+  if(cs)cs.textContent='在线';if(cd)cd.className='dot ok';if(cl)cl.textContent=L.load;
   document.getElementById('c-cpu').textContent=L.cpu+'%';
   var sc=document.getElementById('s-cpu');sc.textContent=L.cpu<50?'空闲':(L.cpu<85?'中载':'高载');sc.className='s '+(L.cpu<50?'ok':(L.cpu<85?'warn':'bad'));
-  var mu=L.mem_used_mb/1024,mt=L.mem_total_mb/1024;
   var pct=L.mem_total_mb>0?Math.round(L.mem_used_mb/L.mem_total_mb*100):0;
-  document.getElementById('c-mem').textContent=mu.toFixed(1)+'/'+mt.toFixed(1)+' GB';
+  document.getElementById('c-mem').textContent=fmtMB(L.mem_used_mb)+'/'+fmtMB(L.mem_total_mb);
   var sm=document.getElementById('s-mem');sm.textContent=pct+'% 已用';sm.className='s '+(pct<70?'ok':(pct<90?'warn':'bad'));
   document.getElementById('c-temp').textContent=L.temp+' °C';
   var st=document.getElementById('s-temp');st.textContent=L.temp<85?'正常':(L.temp<90?'偏热':'过热');st.className='s '+(L.temp<85?'ok':(L.temp<90?'warn':'bad'));
@@ -652,19 +819,24 @@ function refresh(){
   document.getElementById('c-tx').textContent=fmtKB(L.tx);
   document.getElementById('c-conn').textContent=L.conn;
   document.getElementById('t-cpu').textContent='当前 '+L.cpu+'%';
-  document.getElementById('t-mem').textContent='已用 '+mu.toFixed(1)+' GB / '+mt.toFixed(1)+' GB';
+  document.getElementById('t-mem').textContent='已用 '+fmtMB(L.mem_used_mb)+' / 总 '+fmtMB(L.mem_total_mb);
   document.getElementById('t-temp').textContent='当前 '+L.temp+'°C';
   document.getElementById('t-net').textContent='↓'+fmtKB(L.rx)+' ↑'+fmtKB(L.tx);
   draw('g-cpu',d.cpu,'#4fc3f7',true,100,'%');
   draw('g-mem',d.mem_used_mb,'#81c784',true,null,'MB');
   draw('g-temp',d.temp,'#ffb74d',true,null,'°C');
   var sum=d.rx.map(function(v,i){return v+(d.tx[i]||0);});
-  draw('g-net',sum,'#f06292',true,null,'KB/s');
- }).catch(function(){});
+  var mx=Math.max.apply(null,sum.length?sum:[0])||0,net=sum,nu=' KB/s';
+  if(mx>=1024){net=sum.map(function(v){return v/1024;});nu=' MB/s';}
+  draw('g-net',net,'#f06292',true,null,nu);
+ }).catch(function(){
+  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot');
+  if(cs)cs.textContent='离线';if(cd)cd.className='dot bad';
+ });
 }
 setInterval(refresh,2000);refresh();
 setTimeout(showUrlMsg,300);
-</script></body></html>
+</script></div></body></html>
 """
 
 
@@ -690,8 +862,23 @@ class Handler(BaseHTTPRequestHandler):
                                 "temp": history["temp"][-1] if history["temp"] else 0,
                                 "rx": history["rx"][-1] if history["rx"] else 0,
                                 "tx": history["tx"][-1] if history["tx"] else 0,
-                                "conn": history["conn"][-1] if history["conn"] else 0}}
+                                "conn": history["conn"][-1] if history["conn"] else 0,
+                                "load": history["load"][-1] if history["load"] else 0}}
             self._send(200, d)
+        elif self.path.startswith("/download/"):
+            name = os.path.basename(urllib.parse.unquote(self.path[len("/download/"):]))
+            fpath = os.path.join(BACKUP_DIR, name)
+            if not name.endswith(".tar.gz") or not os.path.isfile(fpath):
+                self._send(404, {"ok": False, "error": "备份文件不存在"})
+                return
+            with open(fpath, "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/gzip")
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/api/config":
             try:
                 self._send(200, get_config())
@@ -702,8 +889,13 @@ class Handler(BaseHTTPRequestHandler):
                 cfg_data = get_config()
                 cfg_html = render_config_html(cfg_data)
             except Exception as e:
+                cfg_data = {}
                 cfg_html = '<div class="cfg-grid"><div class="cfg-panel"><h3>错误</h3><div class="desc">' + esc(str(e)) + '</div></div></div>'
-            body = PAGE.replace("%HOST%", HOST).replace('<div class="cfg-grid" id="cfg-grid">加载中...</div>', cfg_html).encode("utf-8")
+            body = PAGE.replace("%HOST%", HOST)
+            body = body.replace("%UPTIME%", esc(cfg_data.get("uptime", "?")))
+            body = body.replace("%AUTOSSH%", esc(cfg_data.get("auto_ssh_ver") or ("已启用" if cfg_data.get("auto_ssh") else "未启用")))
+            body = body.replace("%IPV6%", "已拦截" if cfg_data.get("ipv6_blocked") else "未拦截")
+            body = body.replace('<div class="cfg-grid" id="cfg-grid">加载中...</div>', cfg_html).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
@@ -760,6 +952,9 @@ def main():
     ap.add_argument("--web", type=int, default=WEBPORT)
     a = ap.parse_args()
     HOST, SSHPORT, USER, PASSWD, WEBPORT = a.host, a.port, a.user, a.passwd, a.web
+    if not PASSWD:
+        print("[!] 未提供路由器密码：请设置环境变量 ROUTER_PASSWD 或使用 --passwd 参数")
+        sys.exit(1)
 
     threading.Thread(target=collector_loop, daemon=True).start()
     time.sleep(2)

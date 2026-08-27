@@ -56,12 +56,9 @@ Windows 下直接运行 `deploy/一键部署.bat <IP>`；脚本会从 `anti-ad.n
 
 ### 4. 启动监控面板
 ```
-python panel/router_monitor_ap.py            # 浏览器开 http://127.0.0.1:8787
+set ROUTER_PASSWD=你的密码 && python panel/router_monitor_ap.py   # 浏览器开 http://127.0.0.1:8787
 ```
-功能：温度/负载、SSH 与自愈状态徽章、DNS 上游管理与测速、去广告开关、自定义屏蔽域、WiFi 信道功率、LED、定时任务、在线设备等。
-
-老 dropbear (2017.75) 需要 paramiko 兼容参数：
-`disabled_algorithms={'keys': ['rsa-sha2-256','rsa-sha2-512']}`
+依赖：`pip install -r requirements.txt`（paramiko 必须 <4，5.x 移除了 ssh-rsa，连不上老 dropbear）。
 
 ## 三层自愈体系（重启不怕）
 
@@ -84,6 +81,7 @@ v4 脚本特性：毫秒级防重复（marker）、广告列表用本地缓存�
 
 ## 版本记录
 
+- 2026-08-28：面板 v2（详见 Release）：配置真备份/下载、LED 手动+定时、负载与 IPv6 拦截状态、界面改版；凭据脱敏；`requirements.txt` 锁 `paramiko<4`。
 - 2026-08-27：v4 自愈脚本（防重复下载+缓存刷新+重试兜底）；冷启动演练通过；发现并绕开 arn_switch 假接口问题。
 
 ## 致谢 Acknowledgements
