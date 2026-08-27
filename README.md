@@ -1,6 +1,6 @@
 # 小米 AX3000E 中继模式全套留存：SSH 解锁 + 去广告/DNS 定制 + 监控面板
 
-> 适用：小米 AX3000E（RN07）/ 同代 IPQ 平台（BE3600、AX3000T 等思路一致）。
+> 适用：小米 AX3000E（RN07）/ 同代 IPQ 平台（AX3000T 等思路一致）。
 > 官方固件 **1.0.24**，中继/AP 模式挂在上级路由之后。
 > ⚠️ 仅供学习与自有设备折腾使用；操作路由器风险自负。**升级固件 = 解锁全部报废**。
 
@@ -8,7 +8,7 @@
 
 ```
 panel/    router_monitor_ap.py        中继(AP)模式监控+配置面板(本地8787)
-          router_monitor_be3600.py    主路由模式完整版面板
+          router_monitor_ax3000e.py   主路由模式完整版面板
 deploy/   oneclick_deploy.py          SSH 通了以后一键部署 DNS/去广告/自愈
           一键部署.bat                 Windows 双击入口
 router/   auto_ssh.sh                 ★ v4 强化自愈脚本(放 /data/auto_ssh/)
@@ -90,7 +90,7 @@ v4 脚本特性：毫秒级防重复（marker）、广告列表用本地缓存�
 本项目站在社区成果之上，感谢：
 
 - [lemoeo/AX6S](https://github.com/lemoeo/AX6S) —— `auto_ssh.sh` 的原型与「firewall.include 固化」思路来源；本仓库 `router/auto_ssh.sh` 在其基础上重写（毫秒级防重复触发、去广告列表本地缓存+48h 刷新、后台重试兜底）。
-- 社区公开教程（AX3000T / AX3000E / BE3600 解锁流程的分享者们）—— `xqsystem/start_binding` key 参数注入方法来自相关文章，并非本项目首创。
+- 社区公开教程（AX3000E / AX3000T 解锁流程的分享者们）—— `xqsystem/start_binding` key 参数注入方法来自相关文章，并非本项目首创。
 - [juewuy/ShellCrash](https://github.com/juewuy/ShellCrash) —— 官方固件上运行 Clash 的流行方案，常与本套件配合使用。
 
 License: MIT

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-小米 BE3600 一键部署：SSH 解锁引导 + 模式检测 + 全配置应用 + 面板启动
-用法: python 一键部署.py [BE3600-IP]
-AP 模式: BE3600 接上级路由（如 192.168.2.1），IP 为上级网段分配
-主路由模式: BE3600 拨号，IP 为 192.168.31.1
+小米 AX3000E 一键部署：SSH 解锁引导 + 模式检测 + 全配置应用 + 面板启动
+用法: python 一键部署.py [AX3000E-IP]
+AP 模式: AX3000E 接上级路由（如 192.168.2.1），IP 为上级网段分配
+主路由模式: AX3000E 拨号，IP 为 192.168.31.1
 """
 import sys, os, time, subprocess, base64
 sys.stdout.reconfigure(encoding='utf-8')
@@ -49,9 +49,8 @@ print("尝试 root 用户连接（密码来自环境变量 ROUTER_PASSWD）...")
 ssh = ssh_connect()
 if not ssh:
     print("""
-[!] SSH 无法连接。BE3600 需要先解锁 SSH，两种方式：
-  方式A（推荐）: 用小米 BE3600 的解锁工具/漏洞流程解锁（与 AX3000E 类似，
-                 需按 BE3600 型号（WiFi7/IPQ 平台）对应方法，网上搜 "小米BE3600 解锁SSH"）。
+[!] SSH 无法连接。AX3000E 需要先解锁 SSH，两种方式：
+  方式A（推荐）: 用本仓库 README「快速开始 1」的 start_binding 注入链解锁（本机实测有效，见 docs/自救手册.md）。
   方式B: 若已用其他工具解锁（开启 telnet），把本脚本 IP 改成实际地址重跑。
   解锁完成后【重新运行本脚本】即可自动继续。
 """)
@@ -66,7 +65,7 @@ if gw:
     print("模式: AP（中继/自适应） - 默认网关 %s，由上级路由分配 IP" % gw)
 else:
     mode = "router"
-    print("模式: 主路由 - 无上级网关，BE3600 拨号/独立路由")
+    print("模式: 主路由 - 无上级网关，AX3000E 拨号/独立路由")
 
 # ============ 3. 基础配置（DNS 上游 / 定向 / noipv6） ============
 step(3, "DNS 优化配置")
@@ -107,29 +106,12 @@ print("anti-AD: %s 条（抖音系已过滤）" % n)
 
 # ============ 5. 自愈脚本 auto_ssh + 应用 ============
 step(5, "自愈脚本部署（auto_ssh）")
-auto_ssh = """#!/bin/sh
-auto_ssh_dir="/data/auto_ssh"
-unlock() {
-    [ "$(nvram get telnet_en)" = 0 ] && nvram set telnet_en=1 && nvram commit
-    [ "$(nvram get ssh_en)" = 0 ] && nvram set ssh_en=1 && nvram commit
-    [ -z "$(pidof dropbear)" -o -z "$(netstat -ntul | grep :22)" ] && /etc/init.d/dropbear restart 2>/dev/null
-}
-apply_dns() {
-    echo "addn-hosts=/data/adblock.hosts" > /tmp/dnsmasq.d/99-adblock.conf
-    if [ -s /data/upstreams.conf ]; then cp /data/upstreams.conf /tmp/dnsmasq.d/98-upstream.conf; fi
-    if [ -s /data/bytedance.conf ]; then cp /data/bytedance.conf /tmp/dnsmasq.d/95-bytedance.conf; fi
-    if [ -s /data/noipv6.conf ]; then cp /data/noipv6.conf /tmp/dnsmasq.d/92-noipv6.conf; fi
-    if [ -s /data/logqueries.conf ]; then cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; fi
-    if [ -s /data/microsoft.conf ]; then cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf; fi
-    if [ -s /data/antiad.gz ]; then zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; fi
-    /etc/init.d/dnsmasq restart 2>/dev/null
-}
-main() {
-    [ -z "$1" ] && { unlock; apply_dns & return; }
-    case "$1" in install|uninstall|*) echo ok;; esac
-}
-main "$@"
-"""
+AUTO_SSH = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "router", "auto_ssh.sh"))
+if not os.path.isfile(AUTO_SSH):
+    print("[!] 找不到 router/auto_ssh.sh（需与仓库一起分发），退出")
+    sys.exit(1)
+with open(AUTO_SSH, encoding="utf-8") as f:
+    auto_ssh = f.read()
 q(ssh, "mkdir -p /data/auto_ssh")
 b64 = base64.b64encode(auto_ssh.encode()).decode()
 q(ssh, "echo " + b64 + " | base64 -d > /data/auto_ssh/auto_ssh.sh; chmod +x /data/auto_ssh/auto_ssh.sh")
@@ -145,9 +127,15 @@ print("解析:", r1[:60])
 print("去广告:", r2[:60])
 ssh.close()
 
-panel = os.path.join(SCRIPT_DIR, "router_monitor_be3600.py")
-print("\n启动面板: python %s" % panel)
-subprocess.Popen([sys.executable, panel], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
-time.sleep(3)
-print("面板地址: http://localhost:8787")
-print("\n[完成] BE3600 部署成功！浏览器打开 http://localhost:8787 使用")
+panel = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "panel", "router_monitor_ax3000e.py"))
+if os.path.isfile(panel):
+    print("\n启动面板: python %s" % panel)
+    try:
+        subprocess.Popen([sys.executable, panel], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
+        time.sleep(3)
+        print("面板地址: http://localhost:8787")
+    except OSError as e:
+        print("面板自动启动失败(%s)，请手动运行: python %s" % (e, panel))
+else:
+    print("\n[!] 未找到面板文件 %s，请手动启动" % panel)
+print("\n[完成] AX3000E 部署成功！浏览器打开 http://localhost:8787 使用")
