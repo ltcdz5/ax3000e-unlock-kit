@@ -16,7 +16,7 @@ SSHPORT = 22
 USER = "root"
 PASSWD = os.environ.get("ROUTER_PASSWD", "")
 WEBPORT = 8787
-INTERVAL = 5
+INTERVAL = 3
 MAX_POINTS = 300
 
 try:
