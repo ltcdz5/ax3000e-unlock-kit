@@ -1,30 +1,32 @@
 @echo off
-rem ===== double-click AFTER winget installs finish =====
+rem ===== STEP 1: create public repo + push (run AFTER 0-login succeeded) =====
 setlocal
 cd /d "%USERPROFILE%\ax3000e-unlock-kit"
 
-where git >nul 2>nul || echo [!] need:  winget install --id Git.Git -e --source winget
-where gh   >nul 2>nul || echo [!] need:  winget install --id GitHub.cli -e --source winget
-where git >nul 2>nul && where gh >nul 2>nul || (pause & exit /b)
+rem 自动跟随系统代理(梯子)设置
+for /f "tokens=3" %%v in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer 2^>nul') do set HTTPS_PROXY=http://%%v
+if defined HTTPS_PROXY echo [i] using proxy %HTTPS_PROXY%
+
+gh auth status >nul 2>nul
+if errorlevel 1 (
+    echo [!] NOT logged in. Run 0-login-github.bat first.
+    pause & exit /b
+)
+
+rem sync git identity to the logged-in account
+for /f "delims=" %%u in ('gh api user --jq .login') do (
+    git config user.name  "%%u"
+    git config user.email "%%u@users.noreply.github.com"
+    set GHUSER=%%u
+)
 
 if not exist .git (
     git init -b main
     git add -A
-    git commit -m "initial kit: panel + auto_ssh v4 + configs + self-rescue docs"
 )
+git commit -m "initial kit" --allow-empty-message >nul 2>&1
 
-gh auth status >nul 2>nul
-if errorlevel 1 (
-    echo [i] browser will open for login...
-    gh auth login --hostname github.com --git-protocol https --web
-)
-
-rem 同步本地 git 署名为 GitHub 账号(以后的新提交自动正确)
-for /f "delims=" %%u in ('gh api user --jq .login') do (
-    git config user.name  "%%u"
-    git config user.email "%%u@users.noreply.github.com"
-)
-
+echo [i] creating repo and pushing...
 gh repo view ax3000e-unlock-kit >nul 2>nul
 if errorlevel 1 (
     gh repo create ax3000e-unlock-kit --public --source . --push
@@ -32,6 +34,6 @@ if errorlevel 1 (
     git push -u origin main
 )
 
-echo [ok] opening repo page...
-gh repo view ax3000e-unlock-kit --web
-echo [done] you can close this window
+echo ============================================
+if defined GHUSER echo [ok] https://github.com/%GHUSER%/ax3000e-unlock-kit
+pause
