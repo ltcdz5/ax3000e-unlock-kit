@@ -1,0 +1,16 @@
+name: sanity
+
+on: [push]
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: compile python files
+        run: python -m py_compile $(git ls-files '*.py')
+      - name: shell syntax check
+        run: sh -n router/auto_ssh.sh
