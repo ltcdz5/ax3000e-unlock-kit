@@ -1,0 +1,6 @@
+__pycache__/
+*.log
+*.pyc
+panel_stdout.log
+panel_stderr.log
+*.bak*
