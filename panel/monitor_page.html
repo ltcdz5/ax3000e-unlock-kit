@@ -184,8 +184,8 @@ function renderCfg(c){
  h.push(card({title:'在线设备',badge:(c.devices||[]).length+' 台',tip:'实时 ARP 邻居表。DHCP 由上级路由分配，主机名仅在有租约时显示。',body:lst(devs,'暂无设备')}));
  h.push(card({title:'DNS 查询记录 <span class="badge on">实时</span>',tip:'各设备最近 DNS 查询（每 3 秒刷新）。日志超 300KB 自动清空。',
   desc:'<span id="dq-count">最近 0 条查询</span>',body:'<div class="list" id="dq-list"></div>'}));
- var crons=(c.cron_tasks||[]).map(function(t){return item('<span class="val">'+E(t.replace('#panel ',''))+'</span>',B('cron_del','删',{line:t.replace('#panel ','')},'删除该任务？','red'));});
- h.push(card({title:'定时任务',tip:'格式: 分 时 日 月 周 + 命令。例 "0 4 * * *" + reboot = 每天4点重启。',
+ var crons=(c.cron_tasks||[]).map(function(t){return item('<span class="val">'+E(t)+'</span>',B('cron_del','删',{line:t},'删除该任务？','red'));});
+ h.push(card({title:'定时任务',tip:'格式: 分 时 日 月 周 + 命令。例 "0 4 * * *" + reboot = 每天4点重启。真实写入 crontab，重启后仍生效。',
   body:inpRow([inp('cron-sched','如 0 4 * * *'),inp('cron-cmd','命令 如 reboot','180px'),B('cron_add','添加',{},'','')])+lst(crons,'暂无面板定时任务')}));
  var sc=c.led_schedule||{};
  h.push(card({title:'LED 指示灯',badge:'<span class="badge '+(c.led_blue?'on':'off')+'">'+(c.led_blue?'亮':'灭')+'</span>',

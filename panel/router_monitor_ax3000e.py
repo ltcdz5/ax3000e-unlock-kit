@@ -5,17 +5,17 @@ AX3000E 监控 + 配置中心 v5.1（中文版）
 - 配置中心: 全中文 + 每项带建议设置说明，事件委托实现
 用法: python router_monitor.py
 """
-import sys, json, time, threading, argparse, re
+import sys, os, json, time, threading, argparse, re
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from collections import deque
 
-HOST = "192.168.2.105"  # 当前设备(中继/主路由请按需改)
-SSHPORT = 22
-USER = "root"
+HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
+SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
+USER = os.environ.get("ROUTER_USER", "root")
 PASSWD = os.environ.get("ROUTER_PASSWD", "<改成你的路由器SSH密码>")
 WEBPORT = 8787
-INTERVAL = 2
+INTERVAL = 3
 MAX_POINTS = 300
 
 try:
@@ -58,6 +58,27 @@ def sh(cmd, timeout=10):
                 except Exception:
                     time.sleep(2)
         return ""
+
+
+def sh_write(cmd, data, timeout=15):
+    """执行命令并通过 stdin 写入数据(避免命令行拼接的引号/注入问题)，成功返回 True"""
+    global ssh_client
+    with ssh_lock:
+        for _ in range(2):
+            try:
+                if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
+                    ssh_client = ssh_connect()
+                stdin, stdout, stderr = ssh_client.exec_command(cmd, timeout=timeout)
+                stdin.write(data)
+                stdin.channel.shutdown_write()
+                stdout.read()
+                return True
+            except Exception:
+                try:
+                    ssh_client = ssh_connect()
+                except Exception:
+                    time.sleep(2)
+        return False
 
 
 def collect():
@@ -202,9 +223,10 @@ def get_config():
     for idx, d in cur.items():
         binds.append({"id": idx, "mac": d.get("mac", ""), "ip": d.get("ip", ""), "name": d.get("name", "")})
     cfg["binds"] = binds
-    # 用户定时任务（#panel 标记的行）
+    # 用户定时任务（行尾 #panel 标记归属面板的 cron 行）
     crontab = sh("cat /etc/crontabs/root 2>/dev/null")
-    cfg["cron_tasks"] = [l for l in crontab.splitlines() if l.startswith("#panel")]
+    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab.splitlines()
+                         if l.rstrip().endswith("#panel")]
     # 防火墙规则
     fw_rules = []
     cur = {}
@@ -361,10 +383,9 @@ def render_config_html(cfg):
              '<div class="list">' + bd + '</div></div>')
     # 定时任务
     ct = ""
-    for line in cfg.get("cron_tasks", []):
-        t = line.replace("#panel ", "")
+    for t in cfg.get("cron_tasks", []):
         ct += '<div class="item"><span class="val">' + esc(t) + '</span>' + frm("cron_del", {"line": t}, confirm="删除该任务？", btn_txt="删", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>定时任务</h3><div class="tip">💡 格式: 分 时 日 月 周 命令。例 "0 4 * * * reboot" = 每天4点重启路由器。</div>' +
+    h.append('<div class="cfg-panel"><h3>定时任务</h3><div class="tip">💡 格式: 分 时 日 月 周 命令。例 "0 4 * * * reboot" = 每天4点重启路由器。真实写入 crontab，重启后仍生效。</div>' +
              '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cron_add&quot;}"><input class="inp" name="schedule" placeholder="如 0 4 * * *"><input class="inp" name="command" placeholder="命令 如 reboot"><button class="btn" type="submit">添加</button></form>' +
              '<div class="list">' + ct + '</div></div>')
     # 防火墙规则
@@ -441,12 +462,14 @@ def do_action(action, params=None):
         return "DNS 缓存已设为 " + v
     if action == "dns_add":
         s = params.get("server", "").strip()
-        if not re.match(r"^[\d\.]+$", s):
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s):
             return "无效 IP"
         sh("echo 'server=" + s + "' >> /tmp/dnsmasq.d/98-upstream.conf; /etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
         return "已添加上游 " + s
     if action == "dns_del":
         s = params.get("server", "").strip()
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s):
+            return "无效 IP"
         sh("sed -i '/server=" + re.escape(s) + "$/d' /tmp/dnsmasq.d/98-upstream.conf; /etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
         return "已删除上游 " + s
     if action == "ad_custom_add":
@@ -456,7 +479,11 @@ def do_action(action, params=None):
         sh("echo 'address=/" + d + "/0.0.0.0' >> /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
         return "已屏蔽 " + d
     if action == "ad_custom_del":
-        d = params.get("domain", "").strip()
+        d = params.get("domain", "").strip().lower()
+        if not re.match(r"^[a-z0-9\-\.]+$", d):
+            return "无效域名"
+        if sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null | grep -c 'address=/" + d + "/0.0.0.0'").strip() == "0":
+            return "未找到屏蔽记录 " + d
         sh("grep -v 'address=/" + d + "/0.0.0.0' /tmp/dnsmasq.d/97-custom.conf > /tmp/c.tmp; mv /tmp/c.tmp /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
         return "已解除屏蔽 " + d
     if action == "dhcp_lease":
@@ -531,14 +558,31 @@ def do_action(action, params=None):
         cmd = params.get("command", "").strip()
         if not (sched and cmd):
             return "时间和命令必填"
-        sh("echo '#panel " + sched + " " + cmd + "' >> /etc/crontabs/root; /etc/init.d/cron restart")
+        fields = sched.split()
+        if len(fields) != 5 or not all(re.match(r"^[\d*,/-]+$", f) for f in fields):
+            return "时间须为 5 段「分 时 日 月 周」，例 0 4 * * *"
+        if len(cmd) > 200 or "\n" in cmd or cmd.endswith("#panel"):
+            return "命令无效"
+        line = sched + " " + cmd + " #panel"
+        if line in sh("cat /etc/crontabs/root 2>/dev/null").splitlines():
+            return "该任务已存在"
+        if not sh_write("cat >> /etc/crontabs/root", line + "\n"):
+            return "写入失败"
+        sh("/etc/init.d/cron restart")
         return "定时任务已添加: " + sched + " " + cmd
     if action == "cron_del":
         line = params.get("line", "").strip()
-        if line:
-            sh("sed -i '/#panel " + re.escape(line) + "/d' /etc/crontabs/root; /etc/init.d/cron restart")
-            return "定时任务已删除: " + line
-        return "参数无效"
+        if not (line and len(line) <= 220):
+            return "参数无效"
+        target = line + " #panel"
+        cur = sh("cat /etc/crontabs/root 2>/dev/null").splitlines()
+        keep = [l for l in cur if l.strip() != target]
+        if len(keep) == len(cur):
+            return "未找到该任务"
+        if not sh_write("cat > /etc/crontabs/root", "\n".join(keep) + "\n"):
+            return "写入失败"
+        sh("/etc/init.d/cron restart")
+        return "定时任务已删除: " + line
     if action == "dns_speedtest":
         upstreams = [l.strip().split("server=")[1] for l in sh("cat /tmp/dnsmasq.d/98-upstream.conf").splitlines() if l.startswith("server=")]
         if not upstreams:
@@ -832,7 +876,7 @@ function renderCfgBody(d){
   var bd='';d.binds.forEach(function(x){bd+='<div class="item"><span class="val">'+x.name+'</span><span class="val">'+x.mac+'</span><span class="val">'+x.ip+'</span><button class="btn red" data-act="device_unbind" data-id="'+x.id+'" data-confirm="解除绑定？">解绑</button></div>';});
   h+=panel('静态 IP 绑定','','把设备固定为指定 IP（端口转发前提）。填设备的 MAC 和想固定的 IP。','<div class="row"><input class="inp" id="bd-mac" placeholder="MAC 如 aa:bb:cc:dd:ee:ff"><input class="inp" id="bd-ip" placeholder="IP 如 192.168.31.50"><input class="inp" id="bd-name" placeholder="名称(可选)">'+btn('绑定','',{act:'device_bind',inp:'bd-mac',inp2:'bd-ip',inp3:'bd-name'})+'</div><div class="list">'+bd+'</div>','');
   // 定时任务
-  var ct='';d.cron_tasks.forEach(function(x){ct+='<div class="item"><span class="val">'+x.replace('#panel ','')+'</span><button class="btn red" data-act="cron_del" data-line="'+x.replace('#panel ','')+'" data-confirm="删除该任务？">删</button></div>';});
+  var ct='';d.cron_tasks.forEach(function(x){ct+='<div class="item"><span class="val">'+x+'</span><button class="btn red" data-act="cron_del" data-line="'+x+'" data-confirm="删除该任务？">删</button></div>';});
   h+=panel('定时任务','','格式: 分 时 日 月 周 命令。例 "0 4 * * * reboot" = 每天4点重启路由器。','<div class="row"><input class="inp" id="cr-s" placeholder="如 0 4 * * *"><input class="inp wide" id="cr-c" placeholder="命令 如 reboot"><button class="btn" data-act="cron_add" data-inp="cr-s" data-inp2="cr-c">添加</button></div><div class="list">'+ct+'</div>','');
   // 系统操作
   // LED + 备份 + Guest

@@ -294,9 +294,10 @@ def get_config():
         if m:
             queries.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
     cfg["dns_queries"] = queries[-40:][::-1]
-    # 定时任务（#panel 标记的行）
+    # 定时任务（行尾 #panel 标记归属面板的 cron 行）
     crontab = sh("cat /etc/crontabs/root 2>/dev/null")
-    cfg["cron_tasks"] = [l for l in crontab.splitlines() if l.startswith("#panel")]
+    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab.splitlines()
+                         if l.rstrip().endswith("#panel")]
     # LED 定时计划（从 crontab 的 led_ctl 行解析）
     led_on_t, led_off_t = "", ""
     for l in crontab.splitlines():
@@ -445,12 +446,14 @@ def do_action(action, params=None):
         return "DNS 缓存已设为 " + v
     if action == "dns_add":
         s = params.get("server", "").strip()
-        if not re.match(r"^[\d\.]+$", s):
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s):
             return "无效 IP"
         sh("echo 'server=" + s + "' >> /tmp/dnsmasq.d/98-upstream.conf; /etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
         return "已添加上游 " + s
     if action == "dns_del":
         s = params.get("server", "").strip()
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s):
+            return "无效 IP"
         sh("sed -i '/server=" + re.escape(s) + "$/d' /tmp/dnsmasq.d/98-upstream.conf; /etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
         return "已删除上游 " + s
     if action == "ad_custom_add":
@@ -460,7 +463,11 @@ def do_action(action, params=None):
         sh("echo 'address=/" + d + "/0.0.0.0' >> /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
         return "已屏蔽 " + d
     if action == "ad_custom_del":
-        d = params.get("domain", "").strip()
+        d = params.get("domain", "").strip().lower()
+        if not re.match(r"^[a-z0-9\-\.]+$", d):
+            return "无效域名"
+        if sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null | grep -c 'address=/" + d + "/0.0.0.0'").strip() == "0":
+            return "未找到屏蔽记录 " + d
         sh("grep -v 'address=/" + d + "/0.0.0.0' /tmp/dnsmasq.d/97-custom.conf > /tmp/c.tmp; mv /tmp/c.tmp /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
         return "已解除屏蔽 " + d
     if action == "wifi_channel":
@@ -487,14 +494,31 @@ def do_action(action, params=None):
         cmd = params.get("command", "").strip()
         if not (sched and cmd):
             return "时间和命令必填"
-        sh("echo '#panel " + sched + " " + cmd + "' >> /etc/crontabs/root; /etc/init.d/cron restart")
+        fields = sched.split()
+        if len(fields) != 5 or not all(re.match(r"^[\d*,/-]+$", f) for f in fields):
+            return "时间须为 5 段「分 时 日 月 周」，例 0 4 * * *"
+        if len(cmd) > 200 or "\n" in cmd or cmd.endswith("#panel"):
+            return "命令无效"
+        line = sched + " " + cmd + " #panel"
+        if line in sh("cat /etc/crontabs/root 2>/dev/null").splitlines():
+            return "该任务已存在"
+        if not sh_write("cat >> /etc/crontabs/root", line + "\n"):
+            return "写入失败"
+        sh("/etc/init.d/cron restart")
         return "定时任务已添加: " + sched + " " + cmd
     if action == "cron_del":
         line = params.get("line", "").strip()
-        if line:
-            sh("sed -i '/#panel " + re.escape(line) + "/d' /etc/crontabs/root; /etc/init.d/cron restart")
-            return "定时任务已删除: " + line
-        return "参数无效"
+        if not (line and len(line) <= 220):
+            return "参数无效"
+        target = line + " #panel"
+        cur = sh("cat /etc/crontabs/root 2>/dev/null").splitlines()
+        keep = [l for l in cur if l.strip() != target]
+        if len(keep) == len(cur):
+            return "未找到该任务"
+        if not sh_write("cat > /etc/crontabs/root", "\n".join(keep) + "\n"):
+            return "写入失败"
+        sh("/etc/init.d/cron restart")
+        return "定时任务已删除: " + line
     if action == "dns_speedtest":
         upstreams = [l.strip().split("server=")[1] for l in sh("cat /tmp/dnsmasq.d/98-upstream.conf").splitlines() if l.startswith("server=")]
         if not upstreams:
