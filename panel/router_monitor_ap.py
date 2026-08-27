@@ -786,7 +786,7 @@ a.dl:hover{text-decoration:underline}
 <div id="tab-mon">
 <div class="cards">
  <div class="card"><div class="v" id="c-cpu">--</div><div class="l">CPU 使用率</div><div class="s" id="s-cpu"></div></div>
- <div class="card"><div class="v" id="c-mem">--</div><div class="l">内存 (已用/总)</div><div class="s" id="s-mem"></div></div>
+ <div class="card"><div class="v" id="c-mem">--</div><div class="l">内存 (已用/可用)</div><div class="s" id="s-mem"></div></div>
  <div class="card"><div class="v" id="c-temp">--</div><div class="l">温度</div><div class="s" id="s-temp"></div></div>
  <div class="card"><div class="v" id="c-rx">--</div><div class="l">下行</div><div class="s" id="s-rx"></div></div>
  <div class="card"><div class="v" id="c-tx">--</div><div class="l">上行</div><div class="s" id="s-tx"></div></div>
@@ -794,7 +794,7 @@ a.dl:hover{text-decoration:underline}
 </div>
 <div class="grid">
  <div class="panel"><h3>CPU 使用率 <span id="t-cpu" style="color:#4fc3f7"></span></h3><canvas id="g-cpu"></canvas></div>
- <div class="panel"><h3>内存 <span id="t-mem" style="color:#81c784"></span></h3><canvas id="g-mem"></canvas></div>
+ <div class="panel"><h3>内存 <span style="color:#64748b;font-weight:400">物理 256MB · 约 74MB 被固件保留</span> <span id="t-mem" style="color:#81c784"></span></h3><canvas id="g-mem"></canvas></div>
  <div class="panel"><h3>温度 <span id="t-temp" style="color:#ffb74d"></span></h3><canvas id="g-temp"></canvas></div>
  <div class="panel"><h3>流量 <span id="t-net" style="color:#f06292"></span></h3><canvas id="g-net"></canvas></div>
 </div>
@@ -871,7 +871,7 @@ function refresh(){
   document.getElementById('c-tx').textContent=fmtKB(L.tx);
   document.getElementById('c-conn').textContent=L.conn;
   document.getElementById('t-cpu').textContent='当前 '+L.cpu+'%';
-  document.getElementById('t-mem').textContent='已用 '+fmtMB(L.mem_used_mb)+' / 总 '+fmtMB(L.mem_total_mb);
+  document.getElementById('t-mem').textContent='已用 '+fmtMB(L.mem_used_mb)+' / 可用 '+fmtMB(L.mem_total_mb);
   document.getElementById('t-temp').textContent='当前 '+L.temp+'°C';
   document.getElementById('t-net').textContent='↓'+fmtKB(L.rx)+' ↑'+fmtKB(L.tx);
   draw('g-cpu',d.cpu,'#4fc3f7',true,100,'%');
