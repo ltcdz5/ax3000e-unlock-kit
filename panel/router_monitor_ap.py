@@ -474,8 +474,8 @@ def render_config_html(cfg):
              '<button class="btn gray" type="submit">更新定时</button></form></div>')
 
     # 性能优化 / DNS测速
-    h.append('<div class="cfg-panel"><h3>DNS 测速优化</h3><div class="tip">💡 对 DNS 上游测速，用最快的几个。硬件 NAT 由上级路由器负责。</div>' +
-             '<div class="row">' + frm("dns_speedtest", btn_txt="DNS 测速") + frm("dns_fastest", confirm="用最快的4个上游并重启DNS？", btn_txt="一键用最快", btn_cls="btn green") + '</div></div>')
+    h.append('<div class="cfg-panel"><h3>DNS 测速优化</h3><div class="tip">💡 "常见DNS优选"：测速内置候选池（国内含阿里/腾讯/字节/114/CNNIC/微软，国外含 Google/Cloudflare/Quad9/OpenDNS），自动选 <b>国内最快4 + 国外最快4</b> 并行全查（谁先回用谁）；微软系域名（更新/OneDrive/Live）定向走微软 DNS。"DNS 测速"仅测当前上游。</div>' +
+             '<div class="row">' + frm("dns_speedtest", btn_txt="DNS 测速") + frm("dns_fastest", confirm="测速候选池并启用 国内4+国外4？约需十几秒，当前上游会被替换。", btn_txt="常见DNS优选", btn_cls="btn green") + '</div></div>')
     # 实时测试
     h.append('<div class="cfg-panel"><h3>实时测试</h3><div class="tip">💡 宽带测速用中科大标准测速（新窗口）；实时测试查延迟/DNS/手机链路（约5秒）。</div>'
              '<div class="row"><button class="btn green" onclick="window.open(\'https://test.ustc.edu.cn\',\'_blank\')">中科大宽带测速</button>'
@@ -649,20 +649,34 @@ def do_action(action, params=None):
         cfg_out = "DNS 上游延迟:\n" + "\n".join((str(s["ms"]) + "ms " + s["ip"]) for s in sorted(speeds, key=lambda x: x["ms"]))
         return cfg_out
     if action == "dns_fastest":
-        upstreams = [l.strip().split("server=")[1] for l in sh("cat /tmp/dnsmasq.d/98-upstream.conf").splitlines() if l.startswith("server=")]
-        if not upstreams:
-            return "未找到上游配置"
-        speeds = [(dns_latency(ip), ip) for ip in upstreams]
-        ok = sorted([s for s in speeds if s[0] >= 0], key=lambda x: x[0])
-        if not ok:
-            return "所有上游均超时，请检查网络"
-        top = [ip for _, ip in ok[:4]]
+        cn_pool = ["223.5.5.5", "223.6.6.6", "119.29.29.29", "182.254.116.116", "114.114.114.114",
+                   "114.114.115.115", "1.2.4.8", "101.101.101.101", "180.184.1.1", "180.184.2.2",
+                   "4.2.2.1", "4.2.2.2"]
+        os_pool = ["8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9", "208.67.222.222"]
+        cur = [l.strip().split("server=")[1] for l in sh("cat /tmp/dnsmasq.d/98-upstream.conf").splitlines() if l.startswith("server=")]
+        cn_pool = cn_pool + [ip for ip in cur if ip not in os_pool and re.match(r"^\d+\.\d+\.\d+\.\d+$", ip) and ip not in cn_pool]
+
+        def pick(pool, n):
+            alive = [ip for ip in pool if dns_latency(ip, tries=1) >= 0]
+            ok = sorted((dns_latency(ip, tries=2), ip) for ip in alive)
+            return [ip for ms, ip in ok[:n] if ms >= 0]
+
+        cn_top = pick(cn_pool, 4)
+        os_top = pick(os_pool, 4)
+        if len(cn_top) < 2:
+            return "国内 DNS 可用太少，未做变更"
+        ms_use = "4.2.2.1" if dns_latency("4.2.2.1", tries=1) >= 0 else "4.2.2.2"
+        top = cn_top + os_top
         sh("rm -f /tmp/dnsmasq.d/98-upstream.conf")
         for ip in top:
             sh("echo 'server=" + ip + "' >> /tmp/dnsmasq.d/98-upstream.conf")
+        ms_domains = "microsoft.com microsoftonline.com msftconnecttest.com windowsupdate.com live.com live.net office365.com office.com onedrive.com microsoft.io"
+        sh("rm -f /tmp/dnsmasq.d/91-microsoft.conf; for d in " + ms_domains + "; do echo \"server=/" + "$d/" + ms_use + "\" >> /tmp/dnsmasq.d/91-microsoft.conf; done; cp /tmp/dnsmasq.d/91-microsoft.conf /data/microsoft.conf")
         sh("uci set dhcp.@dnsmasq[0].server='" + " ".join(top) + "' 2>/dev/null; uci commit dhcp 2>/dev/null")
-        sh("/etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
-        return "已启用最快 4 个上游: " + " ".join(top) + "（DNS 已重启，已持久化）"
+        sh("uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null")
+        sh("/etc/init.d/dnsmasq restart")
+        return "国内4: %s；国外4: %s；微软系域名专用→%s。%d 个通用上游并行全查、最快应答生效；DNS 已重启并持久化" % (
+            " ".join(cn_top), " ".join(os_top), ms_use, len(top))
     if action == "led_toggle":
         cur = sh("uci get xiaoqiang.common.XLED 2>/dev/null").strip()
         if cur == "1":
