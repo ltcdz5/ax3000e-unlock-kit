@@ -399,8 +399,10 @@ def render_config_html(cfg):
              '<div class="list">' + ups + '</div><div class="row">' + frm("dnsmasq_restart", btn_txt="重启 DNS 服务", btn_cls="btn gray") + '</div></div>')
 
     # DNS 缓存
-    h.append('<div class="cfg-panel"><h3>DNS 缓存</h3><div class="tip">💡 缓存越大命中率越高。512-4096 合适，当前 ' + esc(cfg.get("cache_size","")) + '。</div><div class="desc">当前 cache-size = ' + esc(cfg.get("cache_size", "")) + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cache_set&quot;}"><input class="inp" name="size" value="' + esc(cfg.get("cache_size", "1024")) + '"><button class="btn" type="submit">保存</button>' + frm("dns_stats", btn_txt="查看命中率", btn_cls="btn gray") + '</form></div>')
+    h.append('<div class="cfg-panel"><h3>DNS 缓存</h3><div class="tip">💡 缓存越大命中率越高，512-4096 合适。命中率越高解析越快、外网查询越少（自上次开机累计）。</div>' +
+             '<div class="desc">命中率 <b id="dns-hitrate">测量中…</b> <span id="dns-hitrate-detail" style="color:#64748b"></span></div>' +
+             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cache_set&quot;}"><input class="inp" name="size" value="' + esc(cfg.get("cache_size", "1024")) + '"><button class="btn" type="submit">保存</button>' +
+             '<button class="btn gray" type="button" onclick="refreshHitrate()">刷新命中率</button></form></div>')
 
     # 去广告
     ad_on = cfg.get("adblock_enabled", True)
@@ -540,6 +542,27 @@ def run_net_test():
     else:
         res.append("设备WiFi链路: 无在线设备")
     return "\n".join(res)
+
+
+def get_dns_stats():
+    """dnsmasq 内置统计（SIGUSR1 转储；因 log-facility 指向查询日志，从该文件提取最后一次转储），失败返回 None"""
+    sh("kill -USR1 $(pidof dnsmasq)")
+    time.sleep(1.5)
+    raw = sh("grep 'queries forwarded' /tmp/dnsquery.log 2>/dev/null | tail -n 1; echo '@@'; "
+             "grep 'cache size' /tmp/dnsquery.log 2>/dev/null | tail -n 1")
+    p = raw.split("@@")
+    fwd = local = csize = None
+    m1 = re.search(r"queries forwarded (\d+), queries answered locally (\d+)", p[0] if p else "")
+    if m1:
+        fwd, local = int(m1.group(1)), int(m1.group(2))
+    if len(p) > 1:
+        m2 = re.search(r"cache size (\d+)", p[1])
+        if m2:
+            csize = int(m2.group(1))
+    if fwd is None or local is None:
+        return None
+    total = fwd + local
+    return {"rate": round(local * 100.0 / total, 1) if total else 0, "local": local, "fwd": fwd, "cache": csize}
 
 
 def do_action(action, params=None):
@@ -686,23 +709,6 @@ def do_action(action, params=None):
             return "已停止 " + name + "（重启路由器后自动恢复）"
         sh("/etc/init.d/%s start 2>/dev/null" % scripts[name])
         return "已启动 " + name + "（若未起来请重启路由器）"
-    if action == "dns_stats":
-        sh("kill -USR1 $(pidof dnsmasq)")
-        time.sleep(1.5)
-        lines = sh("tail -n 30 /tmp/messages").splitlines()
-        fwd = local = csize = None
-        for l in lines:
-            m1 = re.search(r"queries forwarded (\d+), queries answered locally (\d+)", l)
-            if m1:
-                fwd, local = int(m1.group(1)), int(m1.group(2))
-            m2 = re.search(r"cache size (\d+)", l)
-            if m2:
-                csize = int(m2.group(1))
-        if fwd is None or local is None:
-            return "未读到 dnsmasq 统计，请稍后重试"
-        total = fwd + local
-        rate = (local * 100.0 / total) if total else 0
-        return "缓存命中率 %.1f%%（本地应答 %d / 转发 %d · 缓存 %s 条）自上次开机累计" % (rate, local, fwd, csize)
     return "未知操作"
 
 
@@ -894,6 +900,17 @@ function refreshDq(){
  }).catch(function(){});
 }
 setInterval(refreshDq,3000);
+function refreshHitrate(){
+ var el=document.getElementById('dns-hitrate'),det=document.getElementById('dns-hitrate-detail');
+ if(!el)return;
+ el.textContent='测量中…';el.className='';
+ fetch('/api/dnshitrate').then(function(r){return r.json();}).then(function(d){
+  el.textContent=d.rate+'%';
+  el.className=d.rate>=50?'ok':(d.rate>=20?'warn':'bad');
+  if(det)det.textContent='本地应答 '+d.local+' / 转发 '+d.fwd+' · 缓存 '+d.cache+' 条';
+ }).catch(function(){el.textContent='测量失败';el.className='bad';});
+}
+setTimeout(refreshHitrate,800);
 setTimeout(showUrlMsg,300);
 </script></div></body></html>
 """
@@ -947,6 +964,12 @@ class Handler(BaseHTTPRequestHandler):
                     queries.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
             queries.reverse()
             self._send(200, {"queries": queries})
+        elif self.path == "/api/dnshitrate":
+            stats = get_dns_stats()
+            if stats:
+                self._send(200, stats)
+            else:
+                self._send(500, {"ok": False, "error": "未读到 dnsmasq 统计"})
         elif self.path == "/api/config":
             try:
                 self._send(200, get_config())
