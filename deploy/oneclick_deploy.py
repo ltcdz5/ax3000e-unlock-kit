@@ -120,6 +120,7 @@ apply_dns() {
     if [ -s /data/bytedance.conf ]; then cp /data/bytedance.conf /tmp/dnsmasq.d/95-bytedance.conf; fi
     if [ -s /data/noipv6.conf ]; then cp /data/noipv6.conf /tmp/dnsmasq.d/92-noipv6.conf; fi
     if [ -s /data/logqueries.conf ]; then cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; fi
+    if [ -s /data/microsoft.conf ]; then cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf; fi
     if [ -s /data/antiad.gz ]; then zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; fi
     /etc/init.d/dnsmasq restart 2>/dev/null
 }

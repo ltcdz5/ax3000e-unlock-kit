@@ -55,8 +55,9 @@ apply_dns() {
     uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
     [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
+    [ -s /data/microsoft.conf ] && cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf
     [ -s /data/noresolv.conf ] && cp /data/noresolv.conf /tmp/dnsmasq.d/94-noresolv.conf
-    [ -s /data/bytedance.conf ]&& cp /data/bytedance.conf/tmp/dnsmasq.d/95-bytedance.conf
+    [ -s /data/bytedance.conf ] && cp /data/bytedance.conf /tmp/dnsmasq.d/95-bytedance.conf
     if [ -s /data/upstreams.conf ]; then cp /data/upstreams.conf /tmp/dnsmasq.d/98-upstream.conf
     else printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=114.114.114.114\nserver=4.2.2.2\n' > /tmp/dnsmasq.d/98-upstream.conf
     fi
