@@ -7,7 +7,7 @@
 ## 目录结构
 
 ```
-panel/    router_monitor_ap.py        中继(AP)模式监控+配置面板(本地8787)
+panel/    router_monitor_ap.py        中继(AP)面板·核心逻辑  ·+ monitor_web.py 服务/认证 ·+ monitor_page.html 前端
           router_monitor_ax3000e.py   主路由模式完整版面板
 deploy/   oneclick_deploy.py          SSH 通了以后一键部署 DNS/去广告/自愈
           一键部署.bat                 Windows 双击入口
@@ -59,6 +59,7 @@ Windows 下直接运行 `deploy/一键部署.bat <IP>`；脚本会从 `anti-ad.n
 set ROUTER_PASSWD=你的密码 && python panel/router_monitor_ap.py   # 浏览器开 http://127.0.0.1:8787
 ```
 依赖：`pip install -r requirements.txt`（paramiko 必须 <4，5.x 移除了 ssh-rsa，连不上老 dropbear）。
+默认只监听 127.0.0.1；需局域网访问时加 `--lan --token 你的令牌`（HTTP Basic 认证，缺一拒绝启动）。
 
 ## 三层自愈体系（重启不怕）
 

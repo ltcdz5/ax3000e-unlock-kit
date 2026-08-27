@@ -7,13 +7,13 @@
 用法: python router_monitor_ap.py
 """
 import sys, os, json, time, threading, argparse, re
-import urllib.parse
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from collections import deque
 
-HOST = "192.168.2.106"
-SSHPORT = 22
-USER = "root"
+import monitor_web
+
+HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
+SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
+USER = os.environ.get("ROUTER_USER", "root")
 PASSWD = os.environ.get("ROUTER_PASSWD", "")
 WEBPORT = 8787
 INTERVAL = 3
@@ -235,13 +235,13 @@ def collector_loop():
 
 
 def get_config():
-    cfg = {}
+    cfg = {"host": HOST}
     # DNS 上游
     up = sh("cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null")
     cfg["dns_upstreams"] = [l.replace("server=", "").strip() for l in up.splitlines() if l.startswith("server=")]
     cfg["cache_size"] = sh("uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null") or "150"
     # 去广告
-    cfg["adblock_hagezi"] = sh("wc -l /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null").split()[0] if sh("test -f /tmp/dnsmasq.d/96-antiad.conf && echo y") == "y" else 0
+    cfg["adblock_antiad"] = sh("wc -l /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null").split()[0] if sh("test -f /tmp/dnsmasq.d/96-antiad.conf && echo y") == "y" else 0
     cfg["adblock_yhosts"] = sh("wc -l /data/adblock.hosts 2>/dev/null").split()[0] if sh("test -f /data/adblock.hosts && echo y") == "y" else 0
     cfg["adblock_enabled"] = "99-adblock.conf" in sh("ls /tmp/dnsmasq.d/ 2>/dev/null")
     # 自定义屏蔽
@@ -265,6 +265,7 @@ def get_config():
     ps_raw = sh("ps w | grep -E 'messagingagent|mosquitto|xq_info_sync_mqtt' | grep -v grep")
     svc_running = {n: (n in ps_raw) for n in ("messagingagent", "mosquitto", "xq_info_sync_mqtt")}
     cfg["cloud_services"] = [{"name": n, "running": svc_running[n]} for n in ("messagingagent", "mosquitto", "xq_info_sync_mqtt")]
+    cfg["gateway"] = sh("ip route show default 2>/dev/null | awk '{print $3; exit}'").strip()
     # 在线设备（中继模式：实时 ARP 邻居表，DHCP 租约仅补主机名）
     leases = {}
     for line in sh("cat /tmp/dhcp.leases 2>/dev/null").splitlines():
@@ -275,7 +276,7 @@ def get_config():
     for line in sh("ip neigh show dev br-lan 2>/dev/null").splitlines():
         p = line.split()
         if len(p) >= 4 and p[0].startswith("192.168.") and "lladdr" in p:
-            if p[0] == cfg.get("gateway", "192.168.2.1"):
+            if cfg["gateway"] and p[0] == cfg["gateway"]:
                 continue
             mac = p[p.index("lladdr") + 1]
             devices.append({"ip": p[0], "mac": mac, "host": leases.get(mac, ""), "state": p[-1]})
@@ -335,7 +336,6 @@ def get_config():
     }
     # 中继模式信息
     cfg["mode"] = "ap"
-    cfg["gateway"] = sh("ip route show default 2>/dev/null | awk '{print $3}'").strip() or "192.168.2.1"
     # 本地历史备份列表（不走 SSH）
     cfg["backups"] = list_backups()
     return cfg
@@ -363,153 +363,6 @@ def dns_latency(server, domain="www.baidu.com", tries=3):
     return round(sum(ok) / len(ok), 1) if ok else -1
 
 
-def esc(s):
-    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-def frm(action, params=None, confirm=None, fields=None, btn_txt="执行", btn_cls="btn"):
-    p = json.dumps({"action": action, "params": params or {}}, ensure_ascii=False)
-    p = p.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
-    h = '<form method="post" action="/api/act" style="display:inline">'
-    h += '<input type="hidden" name="json" value="' + p + '">'
-    for fname, fval in (fields or {}).items():
-        h += '<input class="inp" name="' + fname + '" value="' + esc(fval) + '" style="width:auto">'
-    h += '<button class="' + btn_cls + '" type="submit"'
-    if confirm:
-        h += ' onclick="return confirm(\'' + confirm.replace("'", "&#39;") + '\')"'
-    h += '>' + btn_txt + '</button></form>'
-    return h
-
-def render_config_html(cfg):
-    h = []
-    # 模式提示
-    h.append('<div class="cfg-panel" style="grid-column:1/-1"><h3>📡 当前模式：有线中继 (AP) <span class="badge ' + ('on' if cfg.get("ssh") else 'off') + '">SSH ' + ('在线' if cfg.get("ssh") else '离线') + '</span></h3>' +
-             '<div class="tip">中继模式下，本路由器仅负责 WiFi 接入 + DNS 去广告。' +
-             'IP/DHCP/NAT/防火墙/QoS/端口转发/UPnP 均由上级路由器 ' + esc(cfg.get("gateway", "192.168.2.1")) + ' 管理，本面板不提供这些功能。</div>' +
-             '<div class="desc">运行 ' + esc(cfg.get("uptime", "")) + ' · 温度 ' + esc(cfg.get("temp", 0)) + '°C · ' +
-             'SSH自愈 ' + ('<span class="ok">' + esc(cfg.get("auto_ssh_ver") or "已启用") + '</span>' if cfg.get("auto_ssh") else '<span class="bad">未检测到</span>') + ' · ' +
-             'IPv6 ' + ('<span class="ok">已拦截</span>' if cfg.get("ipv6_blocked") else '<span class="warn">未拦截</span>') +
-             '（' + str(cfg.get("ipv6_clients", 0)) + ' 台设备在用 IPv6）</div></div>')
-
-    # DNS 上游
-    ups = ""
-    for s in cfg.get("dns_upstreams", []):
-        ups += '<div class="item"><span class="val">' + esc(s) + '</span>' + frm("dns_del", {"server": s}, confirm="删除 " + s + " 吗？", btn_txt="删除", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>DNS 上游</h3><div class="tip">💡 中继模式下本路由器作为 DNS 服务器提供去广告。设备需手动设置 DNS 为 ' + HOST + ' 或在上级路由器 DHCP 中指定。国内优先（阿里/腾讯/114），海外备选。</div><div class="desc">当前 ' + str(len(cfg.get("dns_upstreams", []))) + ' 个上游</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;dns_add&quot;}"><input class="inp" name="server" placeholder="例: 223.5.5.5"><button class="btn" type="submit">添加</button></form>' +
-             '<div class="list">' + ups + '</div><div class="row">' + frm("dnsmasq_restart", btn_txt="重启 DNS 服务", btn_cls="btn gray") + '</div></div>')
-
-    # DNS 缓存
-    h.append('<div class="cfg-panel"><h3>DNS 缓存</h3><div class="tip">💡 缓存越大命中率越高，512-4096 合适。命中率越高解析越快、外网查询越少（自上次开机累计）。</div>' +
-             '<div class="desc">命中率 <b id="dns-hitrate">测量中…</b> <span id="dns-hitrate-detail" style="color:#64748b"></span></div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cache_set&quot;}"><input class="inp" name="size" value="' + esc(cfg.get("cache_size", "1024")) + '"><button class="btn" type="submit">保存</button>' +
-             '<button class="btn gray" type="button" onclick="refreshHitrate()">刷新命中率</button></form></div>')
-
-    # 去广告
-    ad_on = cfg.get("adblock_enabled", True)
-    h.append('<div class="cfg-panel"><h3>去广告</h3><div class="tip">💡 anti-AD(10万条国内+国外) + yhosts。DNS 请求走本路由器时生效。</div><div class="desc"><span class="badge ' + ('on' if ad_on else 'off') + '">' + ('已开' if ad_on else '已关') + '</span> anti-AD ' + esc(cfg.get("adblock_hagezi", "")) + ' 条 / yhosts ' + esc(cfg.get("adblock_yhosts", "")) + ' 条</div>' +
-             '<div class="row">' + frm("adblock_toggle", confirm="确定" + ("关闭" if ad_on else "开启") + "去广告吗？", btn_txt=("关闭" if ad_on else "开启") + "去广告") +
-             frm("hagezi_update", confirm="重新下载 anti-AD 列表？", btn_txt="更新列表") + '</div></div>')
-
-    # 自定义屏蔽
-    cust = ""
-    for d in cfg.get("custom_adblock", []):
-        cust += '<div class="item"><span class="val">' + esc(d) + '</span>' + frm("ad_custom_del", {"domain": d}, confirm="解除屏蔽 " + d + " 吗？", btn_txt="解除", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>自定义屏蔽域名</h3><div class="tip">💡 去广告列表没覆盖的域名手动加这里。填域名如 ads.example.com（不含 http）。</div><div class="desc">已屏蔽 ' + str(len(cfg.get("custom_adblock", []))) + ' 个</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;ad_custom_add&quot;}"><input class="inp" name="domain" placeholder="例: ads.example.com"><button class="btn" type="submit">屏蔽</button></form>' +
-             '<div class="list">' + cust + '</div></div>')
-
-    # WiFi 信道
-    w = cfg.get("wifi", {})
-    a_ch = str(w.get("a_channel", "0"))
-    g_ch = str(w.get("g_channel", "0"))
-    g_disabled = str(w.get("g_disabled", "")) == "1"
-    asel = '<select class="inp" name="channel">'
-    for ch in [36, 40, 44, 48, 149, 153, 157, 161]:
-        asel += '<option value="' + str(ch) + '"' + (' selected' if a_ch == str(ch) else '') + '>' + str(ch) + (' (推荐)' if ch in (36, 149) else '') + '</option>'
-    asel += '</select>'
-    gsel = '<select class="inp" name="channel">'
-    for ch in [1, 6, 11, 3, 9, 13]:
-        gsel += '<option value="' + str(ch) + '"' + (' selected' if g_ch == str(ch) else '') + '>' + str(ch) + (' (推荐)' if ch in (1, 6, 11) else '') + '</option>'
-    gsel += '</select>'
-    h.append('<div class="cfg-panel"><h3>WiFi 信道</h3><div class="tip">💡 信道即时切换（官方接口，不断网）。5G 推荐 36/149（避开雷达）；2.4G 推荐 1/6/11。重启后恢复自动。</div>' +
-             '<div class="desc">5G: ' + esc(w.get("a_ssid", "")) + ' 信道' + (a_ch if a_ch != "0" else "自动") + ' · 2.4G: ' + esc(w.get("g_ssid", "")) + (' <span class="badge off">已禁用</span>' if g_disabled else ' 信道' + (g_ch if g_ch != "0" else "自动")) + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_channel&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;5g&quot;}}">5G ' + asel + '<button class="btn" type="submit">切换5G信道</button></form>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_channel&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;2g&quot;}}">2.4G ' + gsel + '<button class="btn" type="submit">切换2.4G信道</button></form></div>')
-
-    # WiFi 功率
-    h.append('<div class="cfg-panel"><h3>WiFi 功率</h3><div class="tip">💡 即时调整发射功率。28dBm=满功率(约630mW)，不需要覆盖可降低省电。</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_power&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;5g&quot;}}">5G功率<select class="inp" name="power"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option></select><button class="btn" type="submit">设5G功率</button></form>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_power&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;2g&quot;}}">2.4G功率<select class="inp" name="power"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option></select><button class="btn" type="submit">设2.4G功率</button></form></div>')
-
-    # 在线设备
-    dv = ""
-    for x in cfg.get("devices", []):
-        dv += '<div class="item"><span class="val">' + esc(x.get("host", "")) + '</span><span class="val">' + esc(x.get("ip", "")) + '</span><span class="val">' + esc(x.get("mac", "")) + '</span><span class="val" style="color:' + ('#66bb6a' if x.get("state") == "REACHABLE" else '#ffa726') + '">' + esc(x.get("state", "")) + '</span></div>'
-    h.append('<div class="cfg-panel"><h3>在线设备</h3><div class="tip">💡 实时 ARP 邻居表（当前与路由器通信的设备，含状态）。DHCP 由上级路由器分配，主机名仅在有租约记录时显示。</div><div class="desc">' + str(len(cfg.get("devices", []))) + ' 台（实时）</div><div class="list">' + dv + '</div></div>')
-    # DNS 查询记录
-    dq = ""
-    for x in cfg.get("dns_queries", []):
-        dq += '<div class="item"><span class="val">' + esc(x.get("ip", "")) + '</span><span class="val">[' + esc(x.get("type", "")) + ']</span><span class="val">' + esc(x.get("domain", "")) + '</span></div>'
-    h.append('<div class="cfg-panel"><h3>DNS 查询记录 <span class="badge on">实时</span></h3><div class="tip">💡 实时显示各设备最近 DNS 查询（谁在查什么域名），每 3 秒自动刷新。日志超 300KB 自动清空。</div><div class="desc" id="dq-count">最近 ' + str(len(cfg.get("dns_queries", []))) + ' 条查询</div><div class="list" id="dq-list">' + dq + '</div></div>')
-
-    # 定时任务
-    ct = ""
-    for line in cfg.get("cron_tasks", []):
-        t = line.replace("#panel ", "")
-        ct += '<div class="item"><span class="val">' + esc(t) + '</span>' + frm("cron_del", {"line": t}, confirm="删除该任务？", btn_txt="删", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>定时任务</h3><div class="tip">💡 格式: 分 时 日 月 周 命令。例 "0 4 * * * reboot" = 每天4点重启路由器。</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cron_add&quot;}"><input class="inp" name="schedule" placeholder="如 0 4 * * *"><input class="inp" name="command" placeholder="命令 如 reboot"><button class="btn" type="submit">添加</button></form>' +
-             '<div class="list">' + ct + '</div></div>')
-
-    # LED
-    sched = cfg.get("led_schedule", {})
-    on_t = sched.get("on") or "08:00"
-    off_t = sched.get("off") or "00:00"
-    h.append('<div class="cfg-panel"><h3>LED 指示灯 <span class="badge ' + ('on' if cfg.get("led_blue") else 'off') + '">' + ('亮' if cfg.get("led_blue") else '灭') + '</span></h3>' +
-             '<div class="tip">💡 手动开关 + 定时计划。当前计划：' + esc(sched.get("on") or "--:--") + ' 开灯 / ' + esc(sched.get("off") or "--:--") + ' 关灯（定时任务会覆盖手动操作）。</div>' +
-             '<div class="row">' + frm("led_toggle", btn_txt=("关灯" if cfg.get("led_blue") else "开灯")) + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;led_schedule&quot;}">' +
-             '开灯 <input class="inp" name="on" value="' + esc(on_t) + '" style="width:78px" placeholder="HH:MM">' +
-             '关灯 <input class="inp" name="off" value="' + esc(off_t) + '" style="width:78px" placeholder="HH:MM">' +
-             '<button class="btn gray" type="submit">更新定时</button></form></div>')
-
-    # 性能优化 / DNS测速
-    h.append('<div class="cfg-panel"><h3>DNS 测速优化</h3><div class="tip">💡 "常见DNS优选"：测速内置候选池（国内含阿里/腾讯/字节/114/CNNIC/微软，国外含 Google/Cloudflare/Quad9/OpenDNS），自动选 <b>国内最快4 + 国外最快4</b> 并行全查（谁先回用谁）；微软系域名（更新/OneDrive/Live）定向走微软 DNS。"DNS 测速"仅测当前上游。</div>' +
-             '<div class="row">' + frm("dns_speedtest", btn_txt="DNS 测速") + frm("dns_fastest", confirm="测速候选池并启用 国内4+国外4？约需十几秒，当前上游会被替换。", btn_txt="常见DNS优选", btn_cls="btn green") + '</div></div>')
-    # 实时测试
-    h.append('<div class="cfg-panel"><h3>实时测试</h3><div class="tip">💡 宽带测速用中科大标准测速（新窗口）；实时测试查延迟/DNS/手机链路（约5秒）。</div>'
-             '<div class="row"><button class="btn green" onclick="window.open(\'https://test.ustc.edu.cn\',\'_blank\')">中科大宽带测速</button>'
-             '<button class="btn" id="nt-btn" onclick="netTest()">实时测试</button></div>'
-             '<div id="nt-progress" style="display:none;margin-top:10px"><div style="height:6px;background:#2a3038;border-radius:3px;overflow:hidden"><div id="nt-bar" style="height:100%;width:0%;background:#4caf50;transition:width .3s"></div></div><div class="desc" id="nt-stage" style="margin-top:6px">准备中...</div></div>'
-             '<div id="nt-result" style="margin-top:10px;font-family:monospace;font-size:12px;white-space:pre-line;line-height:1.8"></div></div>')
-
-    # 配置备份
-    bl = ""
-    for b in cfg.get("backups", []):
-        mt = time.strftime("%m-%d %H:%M", time.localtime(b["mtime"]))
-        kb = "%.0f KB" % (b["size"] / 1024.0) if b["size"] < 1024 * 1024 else "%.1f MB" % (b["size"] / 1048576.0)
-        bl += '<div class="item"><span class="val">' + esc(b["name"]) + '</span><span style="display:flex;gap:10px;align-items:center"><span style="color:#64748b;font-size:11px">' + mt + ' · ' + kb + '</span><a class="dl" href="/download/' + urllib.parse.quote(b["name"]) + '">下载</a></span></div>'
-    h.append('<div class="cfg-panel"><h3>配置备份</h3><div class="tip">💡 一键打包 /etc/config、dnsmasq 配置、定时任务、自愈脚本与去广告列表，拉回本机保存。重启/升级固件前建议先备份。</div>' +
-             '<div class="row">' + frm("backup", btn_txt="立即备份", btn_cls="btn green") + '</div>' +
-             ('<div class="list">' + bl + '</div>' if bl else '<div class="desc">暂无备份，点击上方按钮创建第一个</div>') + '</div>')
-
-    # 服务精简
-    svcs = ""
-    for s in cfg.get("cloud_services", []):
-        svcs += ('<div class="item"><span class="val">' + s["name"] + '</span><span style="display:flex;gap:8px;align-items:center">' +
-                 ('<span class="badge on">运行中</span>' if s["running"] else '<span class="badge off">已停止</span>') +
-                 (frm("svc_stop", {"name": s["name"]}, confirm="停止 " + s["name"] + "？重启路由器前不会自动恢复", btn_txt="停止", btn_cls="btn red") if s["running"]
-                  else frm("svc_start", {"name": s["name"]}, btn_txt="启动", btn_cls="btn gray")) + '</span></div>')
-    h.append('<div class="cfg-panel"><h3>服务精简（降负载）</h3><div class="tip">💡 这三个是米家 App 远程控制用的云服务，自用可停，重启路由器后自动恢复。停用期间米家远程/智能联动不可用；管理页(nginx)与系统日志不受影响。</div><div class="list">' + svcs + '</div></div>')
-
-    # 系统操作
-    h.append('<div class="cfg-panel"><h3>系统操作</h3><div class="tip">💡 重启路由器(2秒后执行) · 需等待约2分钟恢复。中继模式下重启不影响上级网络。</div><div class="row">' +
-             frm("reboot", {"confirm": "yes"}, confirm="确定重启路由器？约2分钟断网", btn_txt="重启路由器", btn_cls="btn red") +
-             frm("dnsmasq_restart", btn_txt="重启DNS", btn_cls="btn gray") + '</div></div>')
-
-    return '<div class="cfg-grid">' + "".join(h) + '</div>'
-
-
 def run_net_test():
     """实时网络测试：外网延迟 + DNS + 手机链路（宽带测速走中科大）"""
     import subprocess, time as _t
@@ -533,8 +386,9 @@ def run_net_test():
         if len(p) >= 4 and p[1].startswith("192.168."):
             candidates.append(p[1])
     # 排除自身路由网关和上级路由, 取最后一个(通常是最近接入的设备)
+    gw = sh("ip route show default 2>/dev/null | awk '{print $3; exit}'").strip()
     for ip in candidates:
-        if ip not in ("192.168.2.106", "192.168.2.1"):
+        if ip != HOST and ip != gw:
             mip = ip
     if mip:
         r = sh("ping -c 3 " + mip + " 2>/dev/null | grep -o 'avg = [0-9.]*'")
@@ -576,7 +430,7 @@ def do_action(action, params=None):
             msg = "去广告已开启"
         sh("/etc/init.d/dnsmasq restart")
         return msg
-    if action == "hagezi_update":
+    if action == "antiad_update":
         sh("curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw --connect-timeout 15 --max-time 60")
         sh("grep -vE 'byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance' /tmp/antiad_raw > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null")
         n = sh("wc -l /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null").split()[0]
@@ -726,359 +580,72 @@ def do_action(action, params=None):
     return "未知操作"
 
 
-PAGE = """<!DOCTYPE html>
-<html lang="zh"><head><meta charset="utf-8"><title>小米路由器 中继模式 监控+配置中心</title>
-<style>
-*{box-sizing:border-box}
-:root{--bg0:#0d1117;--bg1:#101820;--card:#161d27;--card2:#1a2330;--line:#263040;--tx:#e8edf4;--tx2:#94a3b8;--acc:#38bdf8;--acc2:#0ea5e9;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
-body{font-family:'Microsoft YaHei','Segoe UI',sans-serif;background:radial-gradient(1100px 560px at 85% -10%,rgba(14,74,110,.35),transparent),radial-gradient(900px 520px at -10% 110%,rgba(6,78,59,.28),transparent),linear-gradient(160deg,var(--bg0),var(--bg1));background-attachment:fixed;color:var(--tx);margin:0;padding:22px;min-height:100vh}
-.wrap{max-width:1320px;margin:0 auto}
-h1{font-size:21px;margin:0 0 4px;letter-spacing:.5px}
-.sub{color:var(--tx2);font-size:12px;margin-bottom:14px}
-.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.chip{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--tx2);background:rgba(255,255,255,.03);border:1px solid var(--line);padding:5px 13px;border-radius:99px}
-.chip b{color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--tx2)}
-.dot.ok{background:var(--ok);box-shadow:0 0 7px var(--ok)}
-.dot.bad{background:var(--bad);box-shadow:0 0 7px var(--bad)}
-.tabs{display:flex;gap:8px;margin-bottom:16px}
-.tab{padding:8px 24px;border-radius:10px;cursor:pointer;background:rgba(255,255,255,.03);border:1px solid var(--line);color:var(--tx2);font-size:13px;transition:all .2s;user-select:none}
-.tab:hover{color:var(--tx);border-color:#3a4a60}
-.tab.active{background:linear-gradient(135deg,#0c4a6e,#075985);border-color:#0284c7;color:#fff;box-shadow:0 2px 14px rgba(2,132,199,.35)}
-.cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-.card{background:linear-gradient(160deg,var(--card),var(--card2));border-radius:14px;padding:14px 18px;min-width:138px;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.28);transition:all .2s}
-.card:hover{transform:translateY(-2px);border-color:#3b5675}
-.card .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
-.card .l{font-size:12px;color:var(--tx2);margin-top:5px}
-.card .s{font-size:11px;margin-top:3px}
-.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.panel{background:linear-gradient(160deg,var(--card),var(--card2));border-radius:14px;padding:14px 16px;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.28)}
-.panel h3{font-size:13px;margin:0 0 8px;color:var(--tx2);display:flex;justify-content:space-between}
-canvas{width:100%;height:150px;display:block}
-.cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(370px,1fr));gap:14px}
-.cfg-panel{background:linear-gradient(160deg,var(--card),var(--card2));border-radius:14px;padding:16px 18px;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.28)}
-.cfg-panel h3{font-size:14px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
-.badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600}
-.badge.on{background:#123527;color:var(--ok);border:1px solid #1f5c40}
-.badge.off{background:#3a1b1f;color:var(--bad);border:1px solid #6e2730}
-.tip{font-size:11px;color:#a5c8e8;background:#122131;border-left:3px solid var(--acc2);padding:7px 10px;border-radius:6px;margin-bottom:10px;line-height:1.6}
-.cfg-panel .desc{font-size:12px;color:var(--tx2);margin-bottom:10px}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
-.btn{padding:6px 14px;border-radius:8px;border:1px solid #0284c7;background:linear-gradient(135deg,#0c4a6e,#075985);color:#fff;cursor:pointer;font-size:12px;transition:all .15s}
-.btn:hover{filter:brightness(1.25);box-shadow:0 2px 10px rgba(2,132,199,.3)}
-.btn.gray{background:#2a333f;border-color:#3c4856}
-.btn.red{border-color:#b3454f;background:linear-gradient(135deg,#5f1f27,#7f2733)}
-.btn.green{border-color:#2f9e57;background:linear-gradient(135deg,#14532d,#166534)}
-.inp{padding:6px 10px;border-radius:8px;border:1px solid #334155;background:#0f1520;color:var(--tx);font-size:12px;width:110px;outline:none;transition:all .15s}
-.inp:focus{border-color:var(--acc2);box-shadow:0 0 0 2px rgba(2,132,199,.22)}
-.inp.wide{width:180px}
-.val{font-family:Consolas,monospace;font-size:12px;color:#a5c8e8;background:#0f1520;padding:4px 8px;border-radius:6px;display:inline-block;margin:2px;border:1px solid #1f2c3d}
-.list{max-height:160px;overflow-y:auto;margin-top:8px;border-radius:8px}
-.list .item{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid #1f2937;font-size:12px}
-.list .item:hover{background:rgba(255,255,255,.04)}
-.msg{position:fixed;bottom:20px;right:20px;background:rgba(12,74,110,.94);color:#fff;padding:11px 20px;border-radius:10px;display:none;font-size:13px;z-index:9;border:1px solid #0284c7;box-shadow:0 6px 24px rgba(0,0,0,.45)}
-a.dl{color:var(--acc);text-decoration:none;font-size:12px}
-a.dl:hover{text-decoration:underline}
-@media (max-width:900px){.grid{grid-template-columns:1fr}}
-</style></head><body>
-<div class="wrap">
-<h1>小米路由器 有线中继模式 监控 + 配置中心</h1>
-<div class="sub">SSH: %HOST% · 中继模式（AP）· DNS去广告 + WiFi管理 · 温度阈值：绿&lt;85 / 橙85-90 / 红&gt;90</div>
-<div class="chips">
- <span class="chip"><span class="dot" id="chip-dot"></span>面板 <b id="chip-ssh">连接中</b></span>
- <span class="chip">运行 <b>%UPTIME%</b></span>
- <span class="chip">负载 <b id="chip-load">--</b></span>
- <span class="chip">采集开销 <b id="chip-collect">--</b></span>
- <span class="chip">SSH自愈 <b>%AUTOSSH%</b></span>
- <span class="chip">IPv6 <b>%IPV6%</b></span>
-</div>
-<div class="tabs">
- <div class="tab active" id="tb-mon" onclick="switchTab('mon')">性能监控</div>
- <div class="tab" id="tb-cfg" onclick="switchTab('cfg')">配置中心</div>
-</div>
-<div id="tab-mon">
-<div class="cards">
- <div class="card"><div class="v" id="c-cpu">--</div><div class="l">CPU 使用率</div><div class="s" id="s-cpu"></div></div>
- <div class="card"><div class="v" id="c-mem">--</div><div class="l">内存 (已用/可用)</div><div class="s" id="s-mem"></div></div>
- <div class="card"><div class="v" id="c-temp">--</div><div class="l">温度</div><div class="s" id="s-temp"></div></div>
- <div class="card"><div class="v" id="c-rx">--</div><div class="l">下行</div><div class="s" id="s-rx"></div></div>
- <div class="card"><div class="v" id="c-tx">--</div><div class="l">上行</div><div class="s" id="s-tx"></div></div>
- <div class="card"><div class="v" id="c-conn">--</div><div class="l">TCP 连接</div><div class="s" id="s-conn"></div></div>
-</div>
-<div class="grid">
- <div class="panel"><h3>CPU 使用率 <span id="t-cpu" style="color:#4fc3f7"></span></h3><canvas id="g-cpu"></canvas></div>
- <div class="panel"><h3>内存 <span style="color:#64748b;font-weight:400">物理 256MB · 约 74MB 被固件保留</span> <span id="t-mem" style="color:#81c784"></span></h3><canvas id="g-mem"></canvas></div>
- <div class="panel"><h3>温度 <span id="t-temp" style="color:#ffb74d"></span></h3><canvas id="g-temp"></canvas></div>
- <div class="panel"><h3>流量 <span id="t-net" style="color:#f06292"></span></h3><canvas id="g-net"></canvas></div>
-</div>
-</div>
-<div id="tab-cfg" style="display:none"><div class="cfg-grid" id="cfg-grid">加载中...</div></div>
-<div class="msg" id="msg"></div>
-<script>
-function switchTab(t){
- document.getElementById('tab-mon').style.display=t==='mon'?'':'none';
- document.getElementById('tab-cfg').style.display=t==='cfg'?'':'none';
- document.getElementById('tb-mon').className='tab'+(t==='mon'?' active':'');
- document.getElementById('tb-cfg').className='tab'+(t==='cfg'?' active':'');
-}
-function showUrlMsg(){var q=location.search.match(/[?&]msg=([^&]+)/);if(q){showMsg(decodeURIComponent(q[1]));}}
-function netTest(){
- var btn=document.getElementById('nt-btn'),bar=document.getElementById('nt-bar'),st=document.getElementById('nt-stage'),pg=document.getElementById('nt-progress'),rs=document.getElementById('nt-result');
- if(btn.disabled)return;
- btn.disabled=true;btn.textContent='测试中...';
- pg.style.display='block';rs.textContent='';
- var stages=['准备中...','外网延迟测试中...','DNS解析测试中...','手机链路测试中...'];
- var p=0,t0=Date.now();
- var timer=setInterval(function(){
-  var el=Date.now()-t0;
-  p=Math.min(97,Math.round(el/5000*97));
-  bar.style.width=p+'%';
-  var si=Math.min(3,Math.floor(el/1600));
-  st.textContent=stages[si]+' '+p+'%';
- },200);
- fetch('/api/nettest',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-  clearInterval(timer);bar.style.width='100%';st.textContent='完成';
-  btn.disabled=false;btn.textContent='开始实时测试';
-  rs.textContent=(d.ok?'':'错误: ')+d.msg;
-  setTimeout(function(){pg.style.display='none';},1500);
- }).catch(function(){
-  clearInterval(timer);bar.style.width='100%';st.textContent='失败';
-  btn.disabled=false;btn.textContent='开始实时测试';
-  rs.textContent='测试失败：请检查连接';
- });
-}
-function showMsg(t){var m=document.getElementById('msg');m.textContent=t;m.style.display='block';setTimeout(function(){m.style.display='none';},3000);}
-function initCanvas(id){var cv=document.getElementById(id),dpr=window.devicePixelRatio||1;cv.width=560*dpr;cv.height=150*dpr;cv.style.width='100%';cv.style.height='150px';return cv;}
-function draw(id,data,color,fill,ymax,unit){
- var cv=initCanvas(id),ctx=cv.getContext('2d'),dpr=window.devicePixelRatio||1;
- ctx.setTransform(dpr,0,0,dpr,0,0);var w=cv.width/dpr,h=cv.height/dpr;ctx.clearRect(0,0,w,h);
- if(!data||data.length<2)return;
- var mx=ymax||Math.max.apply(null,data)*1.2;if(mx<=0)mx=1;
- ctx.font='10px sans-serif';ctx.textBaseline='middle';
- for(var g=0;g<=3;g++){var gy=h-4-(g/3)*(h-14);ctx.strokeStyle='#2e343d';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(28,gy);ctx.lineTo(w,gy);ctx.stroke();ctx.fillStyle='#8a9099';ctx.fillText(((mx*g/3)>=100?Math.round(mx*g/3):(mx*g/3).toFixed(mx>=20?0:1))+(unit||''),2,gy);}
- ctx.strokeStyle=color;ctx.lineWidth=2;ctx.lineJoin='round';ctx.beginPath();
- for(var i=0;i<data.length;i++){var x=30+(i/(data.length-1))*(w-34),y=h-4-(data[i]/mx)*(h-14);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
- ctx.stroke();
- if(fill){ctx.lineTo(w-4,h-4);ctx.lineTo(30,h-4);ctx.closePath();ctx.fillStyle=color+'33';ctx.fill();}
- var lx=w-4,ly=h-4-(data[data.length-1]/mx)*(h-14);
- ctx.beginPath();ctx.arc(lx,ly,3,0,7);ctx.fillStyle=color;ctx.fill();
- ctx.font='bold 12px sans-serif';ctx.fillStyle='#e8eaed';
- var txt=(data[data.length-1]>=100?Math.round(data[data.length-1]):data[data.length-1].toFixed(1))+(unit||'');
- ctx.fillText(txt,lx-70,ly>20?ly-8:ly+14);
-}
-function fmtKB(k){return k>=1024?(k/1024).toFixed(1)+' MB/s':Math.round(k)+' KB/s';}
-function fmtMB(m){return m>=1024?(m/1024).toFixed(1)+' GB':Math.round(m)+' MB';}
-function refresh(){
- fetch('/api').then(function(r){return r.json();}).then(function(d){
-  var L=d.latest;
-  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot'),cl=document.getElementById('chip-load'),cc=document.getElementById('chip-collect');
-  if(cs)cs.textContent='在线';if(cd)cd.className='dot ok';if(cl)cl.textContent=L.load;if(cc)cc.textContent=L.collect_ms+' ms';
-  document.getElementById('c-cpu').textContent=L.cpu+'%';
-  var sc=document.getElementById('s-cpu');sc.textContent=L.cpu<50?'空闲':(L.cpu<85?'中载':'高载');sc.className='s '+(L.cpu<50?'ok':(L.cpu<85?'warn':'bad'));
-  var pct=L.mem_total_mb>0?Math.round(L.mem_used_mb/L.mem_total_mb*100):0;
-  document.getElementById('c-mem').textContent=fmtMB(L.mem_used_mb)+'/'+fmtMB(L.mem_total_mb);
-  var sm=document.getElementById('s-mem');sm.textContent=pct+'% 已用';sm.className='s '+(pct<70?'ok':(pct<90?'warn':'bad'));
-  document.getElementById('c-temp').textContent=L.temp+' °C';
-  var st=document.getElementById('s-temp');st.textContent=L.temp<85?'正常':(L.temp<90?'偏热':'过热');st.className='s '+(L.temp<85?'ok':(L.temp<90?'warn':'bad'));
-  document.getElementById('c-rx').textContent=fmtKB(L.rx);
-  document.getElementById('c-tx').textContent=fmtKB(L.tx);
-  document.getElementById('c-conn').textContent=L.conn;
-  document.getElementById('t-cpu').textContent='当前 '+L.cpu+'%';
-  document.getElementById('t-mem').textContent='已用 '+fmtMB(L.mem_used_mb)+' / 可用 '+fmtMB(L.mem_total_mb);
-  document.getElementById('t-temp').textContent='当前 '+L.temp+'°C';
-  document.getElementById('t-net').textContent='↓'+fmtKB(L.rx)+' ↑'+fmtKB(L.tx);
-  draw('g-cpu',d.cpu,'#4fc3f7',true,100,'%');
-  draw('g-mem',d.mem_used_mb,'#81c784',true,null,'MB');
-  draw('g-temp',d.temp,'#ffb74d',true,null,'°C');
-  var sum=d.rx.map(function(v,i){return v+(d.tx[i]||0);});
-  var mx=Math.max.apply(null,sum.length?sum:[0])||0,net=sum,nu=' KB/s';
-  if(mx>=1024){net=sum.map(function(v){return v/1024;});nu=' MB/s';}
-  draw('g-net',net,'#f06292',true,null,nu);
- }).catch(function(){
-  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot');
-  if(cs)cs.textContent='离线';if(cd)cd.className='dot bad';
- });
-}
-setInterval(refresh,2000);refresh();
-function jesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-function refreshDq(){
- var tc=document.getElementById('tab-cfg');
- if(!tc||tc.style.display==='none')return;
- fetch('/api/dnsquery').then(function(r){return r.json();}).then(function(d){
-  var el=document.getElementById('dq-list');if(!el)return;
-  var h='';
-  d.queries.forEach(function(x){h+='<div class="item"><span class="val">'+jesc(x.ip)+'</span><span class="val">['+jesc(x.type)+']</span><span class="val">'+jesc(x.domain)+'</span></div>';});
-  el.innerHTML=h||'<div class="desc">暂无查询</div>';
-  var dc=document.getElementById('dq-count');if(dc)dc.textContent='最近 '+d.queries.length+' 条查询';
- }).catch(function(){});
-}
-setInterval(refreshDq,3000);
-function refreshHitrate(){
- var el=document.getElementById('dns-hitrate'),det=document.getElementById('dns-hitrate-detail');
- if(!el)return;
- el.textContent='测量中…';el.className='';
- fetch('/api/dnshitrate').then(function(r){return r.json();}).then(function(d){
-  el.textContent=d.rate+'%';
-  el.className=d.rate>=50?'ok':(d.rate>=20?'warn':'bad');
-  if(det)det.textContent='本地应答 '+d.local+' / 转发 '+d.fwd+' · 缓存 '+d.cache+' 条';
- }).catch(function(){el.textContent='测量失败';el.className='bad';});
-}
-setTimeout(refreshHitrate,800);
-setTimeout(showUrlMsg,300);
-</script></div></body></html>
-"""
+def api_snapshot():
+    with data_lock:
+        return {"cpu": list(history["cpu"]), "mem_used_mb": list(history["mem_used_mb"]),
+                "mem_total_mb": list(history["mem_total_mb"]), "temp": list(history["temp"]),
+                "rx": list(history["rx"]), "tx": list(history["tx"]), "conn": list(history["conn"]),
+                "load": list(history["load"]),
+                "latest": {"cpu": history["cpu"][-1] if history["cpu"] else 0,
+                           "mem_used_mb": history["mem_used_mb"][-1] if history["mem_used_mb"] else 0,
+                           "mem_total_mb": history["mem_total_mb"][-1] if history["mem_total_mb"] else 0,
+                           "temp": history["temp"][-1] if history["temp"] else 0,
+                           "rx": history["rx"][-1] if history["rx"] else 0,
+                           "tx": history["tx"][-1] if history["tx"] else 0,
+                           "conn": history["conn"][-1] if history["conn"] else 0,
+                           "load": history["load"][-1] if history["load"] else 0,
+                           "collect_ms": collect_ms}}
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, code, obj):
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+def get_dns_queries(limit=40):
+    out = []
+    for line in sh("tail -n 80 /tmp/dnsquery.log 2>/dev/null").splitlines():
+        m = re.search(r"query\[([A-Z0-9]+)\] ([^ ]+) from ([0-9.]+)", line)
+        if m:
+            out.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
+    out.reverse()
+    return out[:limit]
 
-    def do_GET(self):
-        if self.path == "/api":
-            with data_lock:
-                d = {"cpu": list(history["cpu"]), "mem_used_mb": list(history["mem_used_mb"]),
-                     "mem_total_mb": list(history["mem_total_mb"]), "temp": list(history["temp"]),
-                     "rx": list(history["rx"]), "tx": list(history["tx"]), "conn": list(history["conn"]),
-                     "latest": {"cpu": history["cpu"][-1] if history["cpu"] else 0,
-                                "mem_used_mb": history["mem_used_mb"][-1] if history["mem_used_mb"] else 0,
-                                "mem_total_mb": history["mem_total_mb"][-1] if history["mem_total_mb"] else 0,
-                                "temp": history["temp"][-1] if history["temp"] else 0,
-                                "rx": history["rx"][-1] if history["rx"] else 0,
-                                "tx": history["tx"][-1] if history["tx"] else 0,
-                                "conn": history["conn"][-1] if history["conn"] else 0,
-                                "load": history["load"][-1] if history["load"] else 0,
-                                "collect_ms": collect_ms}}
-            self._send(200, d)
-        elif self.path.startswith("/download/"):
-            name = os.path.basename(urllib.parse.unquote(self.path[len("/download/"):]))
-            fpath = os.path.join(BACKUP_DIR, name)
-            if not name.endswith(".tar.gz") or not os.path.isfile(fpath):
-                self._send(404, {"ok": False, "error": "备份文件不存在"})
-                return
-            with open(fpath, "rb") as f:
-                body = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/gzip")
-            self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        elif self.path == "/api/dnsquery":
-            queries = []
-            for line in sh("tail -n 80 /tmp/dnsquery.log 2>/dev/null").splitlines():
-                m = re.search(r"query\[([A-Z0-9]+)\] ([^ ]+) from ([0-9.]+)", line)
-                if m:
-                    queries.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
-            queries.reverse()
-            self._send(200, {"queries": queries})
-        elif self.path == "/api/dnshitrate":
-            stats = get_dns_stats()
-            if stats:
-                self._send(200, stats)
-            else:
-                self._send(500, {"ok": False, "error": "未读到 dnsmasq 统计"})
-        elif self.path == "/api/config":
-            try:
-                self._send(200, get_config())
-            except Exception as e:
-                self._send(500, {"ok": False, "error": str(e)})
-        else:
-            try:
-                cfg_data = get_config()
-                cfg_html = render_config_html(cfg_data)
-            except Exception as e:
-                cfg_data = {}
-                cfg_html = '<div class="cfg-grid"><div class="cfg-panel"><h3>错误</h3><div class="desc">' + esc(str(e)) + '</div></div></div>'
-            body = PAGE.replace("%HOST%", HOST)
-            body = body.replace("%UPTIME%", esc(cfg_data.get("uptime", "?")))
-            body = body.replace("%AUTOSSH%", esc(cfg_data.get("auto_ssh_ver") or ("已启用" if cfg_data.get("auto_ssh") else "未启用")))
-            body = body.replace("%IPV6%", "已拦截" if cfg_data.get("ipv6_blocked") else "未拦截")
-            body = body.replace('<div class="cfg-grid" id="cfg-grid">加载中...</div>', cfg_html).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
 
-    def do_POST(self):
-        if self.path == "/api/nettest":
-            try:
-                msg = run_net_test()
-                self._send(200, {"ok": True, "msg": msg})
-            except Exception as e:
-                self._send(500, {"ok": False, "msg": str(e)})
-        elif self.path == "/api/act":
-            try:
-                ln = int(self.headers.get("Content-Length", 0))
-                raw = self.rfile.read(ln).decode("utf-8", "replace")
-                data = {}
-                params = {}
-                if raw.startswith("{"):
-                    data = json.loads(raw or "{}")
-                    params = data.get("params", {})
-                else:
-                    from urllib.parse import parse_qs
-                    qs = parse_qs(raw)
-                    data = json.loads(qs.get("json", ["{}"])[0])
-                    params = dict(data.get("params", {}))
-                    for k, v in qs.items():
-                        if k != "json":
-                            params[k] = v[0]
-                msg = do_action(data.get("action", ""), params)
-                self.send_response(302)
-                self.send_header("Location", "/?msg=" + urllib.parse.quote(msg))
-                self.end_headers()
-            except Exception as e:
-                self.send_response(302)
-                self.send_header("Location", "/?msg=" + urllib.parse.quote("操作出错: " + str(e)))
-                self.end_headers()
-        else:
-            self._send(404, {"ok": False})
-
-    def log_message(self, *a):
-        pass
+def read_backup(name):
+    fn = os.path.basename(name)
+    if not fn.endswith(".tar.gz"):
+        return None
+    fpath = os.path.join(BACKUP_DIR, fn)
+    if not os.path.isfile(fpath):
+        return None
+    with open(fpath, "rb") as f:
+        return f.read()
 
 
 def main():
     global HOST, SSHPORT, USER, PASSWD, WEBPORT
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="小米路由器 中继模式 监控+配置中心")
     ap.add_argument("--host", default=HOST)
     ap.add_argument("--port", type=int, default=SSHPORT)
     ap.add_argument("--user", default=USER)
     ap.add_argument("--passwd", default=PASSWD)
     ap.add_argument("--web", type=int, default=WEBPORT)
+    ap.add_argument("--lan", action="store_true", help="绑定所有网卡允许局域网访问（必须同时提供 --token）")
+    ap.add_argument("--token", default=os.environ.get("ROUTER_PANEL_TOKEN", ""),
+                    help="面板访问令牌（HTTP Basic，用户名任意、密码为令牌）")
     a = ap.parse_args()
     HOST, SSHPORT, USER, PASSWD, WEBPORT = a.host, a.port, a.user, a.passwd, a.web
     if not PASSWD:
         print("[!] 未提供路由器密码：请设置环境变量 ROUTER_PASSWD 或使用 --passwd 参数")
         sys.exit(1)
+    if a.lan and not a.token:
+        print("[!] --lan 会暴露到局域网，必须设置 --token（或环境变量 ROUTER_PANEL_TOKEN）")
+        sys.exit(1)
 
     threading.Thread(target=collector_loop, daemon=True).start()
     time.sleep(2)
-    import socket as _sock
-    class DualStackServer(ThreadingHTTPServer):
-        address_family = _sock.AF_INET6
-        def server_bind(self):
-            try:
-                self.socket.setsockopt(_sock.IPPROTO_IPV6, _sock.IPV6_V6ONLY, 0)
-            except OSError:
-                pass
-            super().server_bind()
-    srv = DualStackServer(("::", WEBPORT), Handler)
-    print("小米路由器 中继模式 监控+配置中心: http://127.0.0.1:" + str(WEBPORT))
+    print("小米路由器 中继模式 监控+配置中心")
     print("  路由器: " + USER + "@" + HOST + ":" + str(SSHPORT) + "  (Ctrl+C 停止)")
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        print("\n已停止")
+    monitor_web.serve({"host": HOST, "webport": WEBPORT, "lan": a.lan, "token": a.token,
+                       "api": api_snapshot, "get_config": get_config, "do_action": do_action,
+                       "net_test": run_net_test, "dns_queries": get_dns_queries,
+                       "dns_stats": get_dns_stats, "read_backup": read_backup})
 
 
 if __name__ == "__main__":

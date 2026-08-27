@@ -157,7 +157,7 @@ def get_config():
     # 去广告: 兼容 hagezi 或 anti-AD 两种列表(取行数)
     hz = sh("wc -l /tmp/dnsmasq.d/hagezi.conf 2>/dev/null").split()[0] if sh("test -f /tmp/dnsmasq.d/hagezi.conf && echo y") == "y" else "0"
     ad = sh("wc -l /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null").split()[0] if sh("test -f /tmp/dnsmasq.d/96-antiad.conf && echo y") == "y" else "0"
-    cfg["adblock_hagezi"] = max(int(hz or "0"), int(ad or "0"))
+    cfg["adblock_antiad"] = max(int(hz or "0"), int(ad or "0"))
     cfg["adblock_yhosts"] = sh("wc -l /data/adblock.hosts 2>/dev/null").split()[0] if sh("test -f /data/adblock.hosts && echo y") == "y" else 0
     cfg["adblock_enabled"] = "99-adblock.conf" in sh("ls /tmp/dnsmasq.d/ 2>/dev/null")
     custom = sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null")
@@ -311,9 +311,9 @@ def render_config_html(cfg):
              '<div class="list">' + cust + '</div></div>')
     # 去广告
     ad_on = cfg.get("adblock_enabled", True)
-    h.append('<div class="cfg-panel"><h3>去广告</h3><div class="tip">💡 建议：hagezi(4.2万) + yhosts(6428) 自动更新，开机自愈。</div><div class="desc"><span class="badge ' + ('on' if ad_on else 'off') + '">' + ('已开' if ad_on else '已关') + '</span> hagezi ' + esc(cfg.get("adblock_hagezi", "")) + ' 条 / yhosts ' + esc(cfg.get("adblock_yhosts", "")) + ' 条</div>' +
+    h.append('<div class="cfg-panel"><h3>去广告</h3><div class="tip">💡 建议：hagezi(4.2万) + yhosts(6428) 自动更新，开机自愈。</div><div class="desc"><span class="badge ' + ('on' if ad_on else 'off') + '">' + ('已开' if ad_on else '已关') + '</span> hagezi ' + esc(cfg.get("adblock_antiad", "")) + ' 条 / yhosts ' + esc(cfg.get("adblock_yhosts", "")) + ' 条</div>' +
              '<div class="row">' + frm("adblock_toggle", confirm="确定" + ("关闭" if ad_on else "开启") + "去广告吗？", btn_txt=("关闭" if ad_on else "开启") + "去广告") +
-             frm("hagezi_update", confirm="重新下载 hagezi 列表？", btn_txt="更新列表") + '</div></div>')
+             frm("antiad_update", confirm="重新下载 hagezi 列表？", btn_txt="更新列表") + '</div></div>')
     # UPnP
     upnp = cfg.get("upnp", True)
     h.append('<div class="cfg-panel"><h3>UPnP</h3><div class="tip">💡 建议：保持开启，P2P/游戏语音自动映射端口。</div><div class="desc"><span class="badge ' + ('on' if upnp else 'off') + '">' + ('已开' if upnp else '已关') + '</span> 当前速率 下行 ' + esc(cfg.get("upnp_download", "")) + ' / 上行 ' + esc(cfg.get("upnp_upload", "")) + '</div>' +
@@ -403,7 +403,7 @@ def do_action(action, params=None):
             msg = "去广告已开启"
         sh("/etc/init.d/dnsmasq restart")
         return msg
-    if action == "hagezi_update":
+    if action == "antiad_update":
         sh("curl -sL 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@main/dnsmasq/light.txt' -o /tmp/dnsmasq.d/hagezi.conf --connect-timeout 15 --max-time 90")
         n = sh("wc -l /tmp/dnsmasq.d/hagezi.conf 2>/dev/null").split()[0]
         sh("/etc/init.d/dnsmasq restart")
@@ -787,8 +787,8 @@ function renderCfgBody(d){
   // 去广告
   var adOn=d.adblock_enabled;
   h+=panel('去广告 (hagezi+yhosts)',badge(adOn),'hagezi 每日更新（国外+跟踪），yhosts 国内广告。更新按钮手动拉最新列表。',
-    'hagezi '+d.adblock_hagezi+' 条 + yhosts '+d.adblock_yhosts+' 条',
-    '','<button class="btn" data-act="adblock_toggle" data-confirm="确定'+(adOn?'关闭':'开启')+'去广告吗？">'+(adOn?'关闭':'开启')+'</button><button class="btn" data-act="hagezi_update">更新列表</button>');
+    'hagezi '+d.adblock_antiad+' 条 + yhosts '+d.adblock_yhosts+' 条',
+    '','<button class="btn" data-act="adblock_toggle" data-confirm="确定'+(adOn?'关闭':'开启')+'去广告吗？">'+(adOn?'关闭':'开启')+'</button><button class="btn" data-act="antiad_update">更新列表</button>');
   // UPnP
   h+=panel('UPnP',badge(d.upnp),'自动端口映射（P2P/游戏语音用）。速率限制单位 KB/s，建议保持默认。',
     '速率限制 下行 '+d.upnp_download+' / 上行 '+d.upnp_upload+' KB/s',

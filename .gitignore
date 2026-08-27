@@ -4,3 +4,4 @@ __pycache__/
 panel_stdout.log
 panel_stderr.log
 *.bak*
+backups/

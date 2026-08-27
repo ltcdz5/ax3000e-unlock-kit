@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>小米路由器 · 中继面板</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+ --bg:#13161a;--surface:#1a1e24;--surface2:#20252c;--line:#2a3038;
+ --tx:#d8dde3;--tx2:#7d8896;--acc:#4c9aff;--ok:#42ba5c;--warn:#d2a03e;--bad:#e5534b;
+}
+body{font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:28px 22px;font-size:13px}
+.num{font-family:Consolas,'Cascadia Mono',monospace;font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font-size:17px;font-weight:600;letter-spacing:.01em}
+.sub{color:var(--tx2);font-size:12px;margin-top:4px}
+.chips{display:flex;gap:18px;flex-wrap:wrap;margin:12px 0 22px;color:var(--tx2);font-size:12px}
+.chips span b{color:var(--tx);font-weight:600;margin-left:5px}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--tx2);margin-right:5px;vertical-align:1px}
+.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+.tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.tab{padding:8px 16px;cursor:pointer;color:var(--tx2);font-size:13px;border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
+.tab:hover{color:var(--tx)}
+.tab.active{color:var(--tx);border-bottom-color:var(--acc)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card .v{font-size:22px;font-weight:600}
+.card .l{font-size:11px;color:var(--tx2);margin-top:4px}
+.card .s{font-size:11px;margin-top:2px}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.panel h3{font-size:12px;color:var(--tx2);font-weight:500;display:flex;justify-content:space-between;margin-bottom:6px}
+canvas{width:100%;height:140px;display:block}
+.cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:10px}
+.cfg-panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px}
+.cfg-panel h3{font-size:13px;font-weight:600;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.badge{font-size:11px;font-weight:400;padding:2px 9px;border-radius:99px;color:var(--tx2);background:var(--surface2)}
+.badge.on{color:var(--ok);background:rgba(66,186,92,.12)}
+.badge.off{color:var(--bad);background:rgba(229,83,75,.12)}
+.tip{font-size:12px;color:var(--tx2);line-height:1.6;margin-bottom:10px}
+.cfg-panel .desc{font-size:12px;color:var(--tx2);margin-bottom:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.btn{padding:5px 14px;border-radius:6px;border:1px solid var(--line);background:var(--surface2);color:var(--tx);cursor:pointer;font-size:12px;font-family:inherit}
+.btn:hover{border-color:var(--tx2)}
+.btn.green{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.green:hover{filter:brightness(1.1)}
+.btn.red{color:var(--bad)}
+.btn.red:hover{border-color:var(--bad)}
+.btn.gray{color:var(--tx2)}
+.inp{padding:5px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--tx);font-size:12px;width:110px;outline:none;font-family:inherit}
+.inp:focus{border-color:var(--acc)}
+.val{font-family:Consolas,monospace;font-size:12px;color:var(--tx);background:var(--surface2);padding:2px 8px;border-radius:5px;display:inline-block}
+.list{max-height:160px;overflow-y:auto;margin-top:6px}
+.list .item{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:12px}
+.list .item:last-child{border-bottom:none}
+.msg{position:fixed;bottom:20px;right:20px;background:var(--surface2);color:var(--tx);padding:10px 16px;border-radius:8px;border:1px solid var(--line);display:none;font-size:12px;z-index:100;white-space:pre-line;max-width:420px;line-height:1.6}
+a.dl{color:var(--acc);text-decoration:none;font-size:12px}
+a.dl:hover{text-decoration:underline}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+</style></head><body>
+<div class="wrap">
+<h1>小米路由器 · 有线中继面板</h1>
+<div class="sub" id="subline">DNS 去广告 + WiFi 管理 · 温度阈值 &lt;85 / 85-90 / &gt;90</div>
+<div class="chips">
+ <span><span class="dot" id="chip-dot"></span>面板<b id="chip-ssh">连接中</b></span>
+ <span>运行<b id="chip-uptime">--</b></span>
+ <span>负载<b id="chip-load">--</b></span>
+ <span>采集<b id="chip-collect">--</b></span>
+ <span>SSH自愈<b id="chip-autossh">--</b></span>
+ <span>IPv6<b id="chip-ipv6">--</b></span>
+</div>
+<div class="tabs">
+ <div class="tab active" id="tb-mon" onclick="switchTab('mon')">性能监控</div>
+ <div class="tab" id="tb-cfg" onclick="switchTab('cfg')">配置中心</div>
+</div>
+<div id="tab-mon">
+<div class="cards">
+ <div class="card"><div class="v num" id="c-cpu">--</div><div class="l">CPU 使用率</div><div class="s" id="s-cpu"></div></div>
+ <div class="card"><div class="v num" id="c-mem">--</div><div class="l">内存 (已用/可用)</div><div class="s" id="s-mem"></div></div>
+ <div class="card"><div class="v num" id="c-temp">--</div><div class="l">核心温度</div><div class="s" id="s-temp"></div></div>
+ <div class="card"><div class="v num" id="c-rx">--</div><div class="l">下行</div><div class="s" id="s-rx"></div></div>
+ <div class="card"><div class="v num" id="c-tx">--</div><div class="l">上行</div><div class="s" id="s-tx"></div></div>
+ <div class="card"><div class="v num" id="c-conn">--</div><div class="l">TCP 连接</div><div class="s" id="s-conn"></div></div>
+</div>
+<div class="grid">
+ <div class="panel"><h3>CPU 使用率 <span id="t-cpu"></span></h3><canvas id="g-cpu"></canvas></div>
+ <div class="panel"><h3>内存 <span id="t-mem"></span></h3><canvas id="g-mem"></canvas></div>
+ <div class="panel"><h3>温度 <span id="t-temp"></span></h3><canvas id="g-temp"></canvas></div>
+ <div class="panel"><h3>流量 <span id="t-net"></span></h3><canvas id="g-net"></canvas></div>
+</div>
+</div>
+<div id="tab-cfg" style="display:none"><div class="cfg-grid" id="cfg-grid">配置加载中…</div></div>
+<div class="msg" id="msg"></div>
+<script>
+function E(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function showMsg(t){var m=document.getElementById('msg');m.textContent=t;m.style.display='block';clearTimeout(showMsg._h);showMsg._h=setTimeout(function(){m.style.display='none';},6000);}
+function switchTab(t){
+ document.getElementById('tab-mon').style.display=t==='mon'?'':'none';
+ document.getElementById('tab-cfg').style.display=t==='cfg'?'':'none';
+ document.getElementById('tb-mon').className='tab'+(t==='mon'?' active':'');
+ document.getElementById('tb-cfg').className='tab'+(t==='cfg'?' active':'');
+ if(t==='cfg'&&!CFG)refreshCfg();
+}
+function B(action,label,p,cf,cls){
+ return '<button class="btn '+(cls||'')+'" type="button" data-act="'+E(action)+'" data-p="'+E(JSON.stringify(p||{}))+'"'+(cf?' data-cf="'+E(cf)+'"':'')+'>'+label+'</button>';
+}
+function V(id){var el=document.getElementById(id);return el?el.value.trim():'';}
+var CFG=null,cfgBusy=false;
+function refreshCfg(){
+ if(cfgBusy)return;cfgBusy=true;
+ fetch('/api/config').then(function(r){return r.json();}).then(function(d){CFG=d;renderCfg(d);}).catch(function(){}).finally(function(){cfgBusy=false;});
+}
+function doAct(a,p,cf){
+ var real={};
+ Object.keys(p||{}).forEach(function(k){
+  var v=p[k];
+  if(typeof v==='string'&&v.charAt(0)==='@'){var val=V(v.slice(1));if(!val){showMsg('请先填写：'+k);return;}real[k]=val;}
+  else real[k]=v;
+ });
+ if(a==='cache_save'){a='cache_set';real={size:V('cache-size')};}
+ if(a==='led_save'){a='led_schedule';real={on:V('led-on'),off:V('led-off')};}
+ if(a==='cron_add'){real={schedule:V('cron-sched'),command:V('cron-cmd')};}
+ if(a==='dns_add'){real={server:V('up-server')};}
+ if(a==='ad_custom_add'){real={domain:V('ad-domain')};}
+ if(cf&&!confirm(cf))return;
+ fetch('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a,params:real})})
+ .then(function(r){return r.json();}).then(function(d){
+  showMsg(d.ok?('✅ '+d.msg):('❌ '+(d.error||'失败')));
+  if(d.ok)refreshCfg();
+ }).catch(function(){showMsg('操作失败：连接中断');});
+}
+document.addEventListener('click',function(ev){
+ var b=ev.target.closest?ev.target.closest('button[data-act]'):null;
+ if(!b)return;
+ var p={};try{p=JSON.parse(b.dataset.p||'{}');}catch(e){}
+ doAct(b.dataset.act,p,b.dataset.cf||'');
+},false);
+function card(o){
+ return '<div class="cfg-panel"'+(o.span?' style="grid-column:1/-1"':'')+'><h3>'+o.title+(o.badge||'')+'</h3>'+(o.tip?'<div class="tip">'+o.tip+'</div>':'')+(o.desc?'<div class="desc">'+o.desc+'</div>':'')+(o.body||'')+(o.row?'<div class="row">'+o.row+'</div>':'')+'</div>';
+}
+function inpRow(items){return '<div class="row">'+items.join('')+'</div>';}
+function inp(id,ph,w){return '<input class="inp" id="'+id+'" placeholder="'+ph+'"'+(w?' style="width:'+w+'"':'')+'>';}
+function sel(id,opts,cur){
+ var h='<select class="inp" id="'+id+'">';
+ opts.forEach(function(o){h+='<option value="'+o+'"'+(String(cur)===String(o)?' selected':'')+'>'+o+'</option>';});
+ return h+'</select>';
+}
+function lst(rows,empty){return '<div class="list">'+(rows.join('')||'<div class="desc" style="padding:6px 2px">'+(empty||'无')+'</div>')+'</div>';}
+function item(left,right){return '<div class="item"><span>'+left+'</span><span style="display:flex;gap:8px;align-items:center">'+right+'</span></div>';}
+function renderCfg(c){
+ var h=[];
+ var gw=c.gateway||'未知';
+ document.getElementById('chip-uptime').textContent=c.uptime||'--';
+ document.getElementById('chip-autossh').textContent=c.auto_ssh?(c.auto_ssh_ver||'已启用'):'未检测到';
+ document.getElementById('chip-ipv6').textContent=(c.ipv6_blocked?'已拦截':'未拦截')+'（'+(c.ipv6_clients||0)+' 台在用）';
+ document.getElementById('subline').textContent='SSH: '+E(c.host)+' · DNS 去广告 + WiFi 管理 · 温度阈值 <85 / 85-90 / >90';
+ h.push(card({span:1,title:'当前模式：有线中继 (AP)',badge:'<span class="badge '+(c.ssh?'on':'off')+'">SSH '+(c.ssh?'在线':'离线')+'</span>',
+  tip:'本路由器仅负责 WiFi 接入 + DNS 去广告；IP/DHCP/NAT/防火墙/QoS/端口转发/UPnP 均由上级路由器 '+E(gw)+' 管理。',
+  desc:'运行 '+E(c.uptime)+' · 温度 '+E(c.temp)+'°C · SSH自愈 '+(c.auto_ssh?'<span class="ok">'+E(c.auto_ssh_ver||'已启用')+'</span>':'<span class="bad">未检测到</span>')+' · IPv6 '+(c.ipv6_blocked?'<span class="ok">已拦截</span>':'<span class="warn">未拦截</span>')+'（'+(c.ipv6_clients||0)+' 台设备在用）'}));
+ var ups=(c.dns_upstreams||[]).map(function(s){return item('<span class="val">'+E(s)+'</span>',B('dns_del','删除',{server:s},'删除 '+s+' 吗？','red'));});
+ h.push(card({title:'DNS 上游',tip:'设备需将 DNS 指向 '+E(c.host)+'（本机 DHCP 或上级路由指定）。国内优先，海外备选。',
+  desc:'当前 '+(c.dns_upstreams||[]).length+' 个上游',body:inpRow([inp('up-server','例: 223.5.5.5'),B('dns_add','添加',{},'','')])+lst(ups,'暂无上游'),
+  row:B('dnsmasq_restart','重启 DNS 服务',{},'','gray')}));
+ h.push(card({title:'DNS 缓存',tip:'512-4096 合适。命中率越高解析越快（自上次开机累计）。',
+  desc:'命中率 <b id="dns-hitrate" class="num">测量中…</b> <span id="dns-hitrate-detail" style="color:#7d8896"></span>',
+  body:inpRow(['<input class="inp num" id="cache-size" value="'+E(c.cache_size)+'">',B('cache_save','保存',{},'',''),'<button class="btn gray" type="button" onclick="refreshHitrate()">刷新命中率</button>'])}));
+ var adOn=!!c.adblock_enabled;
+ h.push(card({title:'去广告',badge:'<span class="badge '+(adOn?'on':'off')+'">'+(adOn?'已开':'已关')+'</span>',
+  tip:'anti-AD + yhosts，DNS 请求经过本路由器时生效。',
+  desc:'anti-AD '+E(c.adblock_antiad)+' 条 / yhosts '+E(c.adblock_yhosts)+' 条',
+  row:B('adblock_toggle',(adOn?'关闭':'开启')+'去广告',{},'确定'+(adOn?'关闭':'开启')+'去广告吗？','')+B('antiad_update','更新列表',{},'重新下载 anti-AD 列表？','gray')}));
+ var cust=(c.custom_adblock||[]).map(function(d){return item('<span class="val">'+E(d)+'</span>',B('ad_custom_del','解除',{domain:d},'解除屏蔽 '+d+' 吗？','red'));});
+ h.push(card({title:'自定义屏蔽域名',tip:'去广告列表没覆盖的域名手动加这里（不含 http 前缀）。',
+  desc:'已屏蔽 '+(c.custom_adblock||[]).length+' 个',body:inpRow([inp('ad-domain','例: ads.example.com','180px'),B('ad_custom_add','屏蔽',{},'','')])+lst(cust,'暂无自定义屏蔽')}));
+ var w=c.wifi||{};
+ var aCh=String(w.a_channel||'0'),gCh=String(w.g_channel||'0');
+ h.push(card({title:'WiFi 信道',tip:'即时切换不断网；重启后恢复自动。5G 推荐 36/149，2.4G 推荐 1/6/11。',
+  desc:'5G: '+E(w.a_ssid)+' 信道'+(aCh==='0'?'自动':aCh)+' · 2.4G: '+E(w.g_ssid)+(String(w.g_disabled)==='1'?' <span class="badge off">已禁用</span>':' 信道'+(gCh==='0'?'自动':gCh)),
+  body:inpRow(['5G',sel('a-ch',[36,40,44,48,149,153,157,161],aCh),B('wifi_channel','切换5G信道',{band:'5g',channel:'@a-ch'},'','')])+
+        inpRow(['2.4G',sel('g-ch',[1,6,11,3,9,13],gCh),B('wifi_channel','切换2.4G信道',{band:'2g',channel:'@g-ch'},'','')])}));
+ h.push(card({title:'WiFi 功率',tip:'28dBm 为满功率(约630mW)，按需调低可省电降温。',
+  body:inpRow(['5G',sel('a-pw',[28,24,20,16,12],w.a_power||28),B('wifi_power','设5G功率',{band:'5g',power:'@a-pw'},'','')])+
+        inpRow(['2.4G',sel('g-pw',[28,24,20,16,12],w.g_power||28),B('wifi_power','设2.4G功率',{band:'2g',power:'@g-pw'},'','')])}));
+ var devs=(c.devices||[]).map(function(x){return item('<span class="val">'+E(x.host||'')+'</span>','<span class="val">'+E(x.ip)+'</span><span style="color:#7d8896">'+E(x.mac)+'</span><span class="'+(x.state==='REACHABLE'?'ok':'warn')+'">'+E(x.state)+'</span>');});
+ h.push(card({title:'在线设备',badge:(c.devices||[]).length+' 台',tip:'实时 ARP 邻居表。DHCP 由上级路由分配，主机名仅在有租约时显示。',body:lst(devs,'暂无设备')}));
+ h.push(card({title:'DNS 查询记录 <span class="badge on">实时</span>',tip:'各设备最近 DNS 查询（每 3 秒刷新）。日志超 300KB 自动清空。',
+  desc:'<span id="dq-count">最近 0 条查询</span>',body:'<div class="list" id="dq-list"></div>'}));
+ var crons=(c.cron_tasks||[]).map(function(t){return item('<span class="val">'+E(t.replace('#panel ',''))+'</span>',B('cron_del','删',{line:t.replace('#panel ','')},'删除该任务？','red'));});
+ h.push(card({title:'定时任务',tip:'格式: 分 时 日 月 周 + 命令。例 "0 4 * * *" + reboot = 每天4点重启。',
+  body:inpRow([inp('cron-sched','如 0 4 * * *'),inp('cron-cmd','命令 如 reboot','180px'),B('cron_add','添加',{},'','')])+lst(crons,'暂无面板定时任务')}));
+ var sc=c.led_schedule||{};
+ h.push(card({title:'LED 指示灯',badge:'<span class="badge '+(c.led_blue?'on':'off')+'">'+(c.led_blue?'亮':'灭')+'</span>',
+  tip:'当前计划：'+E(sc.on||'--:--')+' 开灯 / '+E(sc.off||'--:--')+' 关灯（定时会覆盖手动操作）。',
+  body:inpRow([B('led_toggle',(c.led_blue?'关灯':'开灯'),{},'','')])+
+        inpRow(['开灯 <input class="inp num" id="led-on" value="'+E(sc.on||'08:00')+'" style="width:78px">','关灯 <input class="inp num" id="led-off" value="'+E(sc.off||'00:00')+'" style="width:78px">',B('led_save','更新定时',{},'','gray')])}));
+ h.push(card({title:'DNS 测速优化',tip:'对候选池测速，启用国内4+国外4，all-servers 并行取最快。',
+  row:B('dns_speedtest','DNS 测速',{},'','gray')+B('dns_fastest','常见DNS优选',{},'测速候选池并启用 国内4+国外4？约需十几秒，当前上游会被替换。','')}));
+ h.push(card({title:'实时测试',tip:'测速跳转中科大（新窗口）；实时测试查延迟/DNS/设备链路（约5秒）。',
+  body:'<div class="row"><button class="btn gray" type="button" onclick="window.open(\'https://test.ustc.edu.cn\',\'_blank\')">中科大宽带测速</button><button class="btn" id="nt-btn" type="button" onclick="netTest()">实时测试</button></div>'+
+  '<div id="nt-progress" style="display:none;margin-top:10px"><div style="height:4px;background:var(--surface2);border-radius:2px;overflow:hidden"><div id="nt-bar" style="height:100%;width:0%;background:var(--acc);transition:width .3s"></div></div><div class="desc" id="nt-stage" style="margin-top:6px">准备中...</div></div>'+
+  '<div id="nt-result" class="num" style="margin-top:10px;font-size:12px;white-space:pre-line;line-height:1.8"></div>'}));
+ var bl=(c.backups||[]).map(function(b){var d=new Date(b.mtime*1000);var mt=('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+  var kb=b.size<1048576?Math.round(b.size/1024)+' KB':(b.size/1048576).toFixed(1)+' MB';
+  return item('<span class="val">'+E(b.name)+'</span>','<span style="color:#7d8896">'+mt+' · '+kb+'</span><a class="dl" href="/download/'+encodeURIComponent(b.name)+'">下载</a>');});
+ h.push(card({title:'配置备份',tip:'打包路由器配置拉回本机保存；重启/刷固件前先备份。',
+  body:inpRow([B('backup','立即备份',{},'','green')])+(bl.length?lst(bl):'<div class="desc">暂无备份</div>')}));
+ var svcs=(c.cloud_services||[]).map(function(s){
+  return item('<span class="val">'+E(s.name)+'</span>',(s.running?'<span class="badge on">运行中</span>'+B('svc_stop','停止',{name:s.name},'停止 '+s.name+'？重启路由器前不会自动恢复','red'):'<span class="badge off">已停止</span>'+B('svc_start','启动',{name:s.name},'','gray'));});
+ h.push(card({title:'服务精简',tip:'米家 App 云服务可停（重启路由器自动恢复，期间米家远程不可用）；管理页与日志不受影响。',body:lst(svcs,'未检测到服务状态')}));
+ h.push(card({title:'系统操作',tip:'重启路由器约2分钟恢复；中继模式下不影响上级网络。',
+  row:B('reboot','重启路由器',{confirm:'yes'},'确定重启路由器？约2分钟断网','red')+B('dnsmasq_restart','重启DNS',{},'','gray')}));
+ document.getElementById('cfg-grid').innerHTML=h.join('');
+ refreshHitrate();
+}
+function fmtKB(k){return k>=1024?(k/1024).toFixed(1)+' MB/s':Math.round(k)+' KB/s';}
+function fmtMB(m){return m>=1024?(m/1024).toFixed(1)+' GB':Math.round(m)+' MB';}
+function initCanvas(id){var cv=document.getElementById(id),dpr=window.devicePixelRatio||1;cv.width=560*dpr;cv.height=140*dpr;cv.style.width='100%';cv.style.height='140px';return cv;}
+function draw(id,data,color,fill,ymax,unit){
+ var cv=initCanvas(id),ctx=cv.getContext('2d'),dpr=window.devicePixelRatio||1;
+ ctx.setTransform(dpr,0,0,dpr,0,0);var w=cv.width/dpr,h=cv.height/dpr;ctx.clearRect(0,0,w,h);
+ if(!data||data.length<2)return;
+ var mx=ymax||Math.max.apply(null,data)*1.2;if(mx<=0)mx=1;
+ ctx.font='10px Consolas,monospace';ctx.textBaseline='middle';
+ for(var g=0;g<=3;g++){var gy=h-4-(g/3)*(h-14);ctx.strokeStyle='#242a31';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(28,gy);ctx.lineTo(w,gy);ctx.stroke();ctx.fillStyle='#7d8896';ctx.fillText(((mx*g/3)>=100?Math.round(mx*g/3):(mx*g/3).toFixed(mx>=20?0:1))+(unit||''),2,gy);}
+ ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.lineJoin='round';ctx.beginPath();
+ for(var i=0;i<data.length;i++){var x=30+(i/(data.length-1))*(w-34),y=h-4-(data[i]/mx)*(h-14);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+ ctx.stroke();
+ if(fill){ctx.lineTo(w-4,h-4);ctx.lineTo(30,h-4);ctx.closePath();ctx.fillStyle=color+'1f';ctx.fill();}
+ var lx=w-4,ly=h-4-(data[data.length-1]/mx)*(h-14);
+ ctx.beginPath();ctx.arc(lx,ly,2.5,0,7);ctx.fillStyle=color;ctx.fill();
+ ctx.font='bold 12px Consolas,monospace';ctx.fillStyle='#d8dde3';
+ var txt=(data[data.length-1]>=100?Math.round(data[data.length-1]):data[data.length-1].toFixed(1))+(unit||'');
+ ctx.fillText(txt,lx-70,ly>20?ly-8:ly+14);
+}
+function refresh(){
+ fetch('/api').then(function(r){return r.json();}).then(function(d){
+  var L=d.latest;
+  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot'),cl=document.getElementById('chip-load'),cc=document.getElementById('chip-collect');
+  if(cs)cs.textContent='在线';if(cd)cd.className='dot ok';if(cl)cl.textContent=L.load;if(cc)cc.textContent=L.collect_ms+' ms';
+  document.getElementById('c-cpu').textContent=L.cpu+'%';
+  var sc=document.getElementById('s-cpu');sc.textContent=L.cpu<50?'空闲':(L.cpu<85?'中载':'高载');sc.className='s '+(L.cpu<50?'ok':(L.cpu<85?'warn':'bad'));
+  var pct=L.mem_total_mb>0?Math.round(L.mem_used_mb/L.mem_total_mb*100):0;
+  document.getElementById('c-mem').textContent=fmtMB(L.mem_used_mb)+'/'+fmtMB(L.mem_total_mb);
+  var sm=document.getElementById('s-mem');sm.textContent=pct+'% 已用';sm.className='s '+(pct<70?'ok':(pct<90?'warn':'bad'));
+  document.getElementById('c-temp').textContent=L.temp+' °C';
+  var st=document.getElementById('s-temp');st.textContent=L.temp<85?'正常':(L.temp<90?'偏热':'过热');st.className='s '+(L.temp<85?'ok':(L.temp<90?'warn':'bad'));
+  document.getElementById('c-rx').textContent=fmtKB(L.rx);
+  document.getElementById('c-tx').textContent=fmtKB(L.tx);
+  document.getElementById('c-conn').textContent=L.conn;
+  document.getElementById('t-cpu').textContent='当前 '+L.cpu+'%';
+  document.getElementById('t-mem').textContent='已用 '+fmtMB(L.mem_used_mb)+' / 可用 '+fmtMB(L.mem_total_mb)+'（物理256MB）';
+  document.getElementById('t-temp').textContent='当前 '+L.temp+'°C';
+  document.getElementById('t-net').textContent='↓'+fmtKB(L.rx)+' ↑'+fmtKB(L.tx);
+  draw('g-cpu',d.cpu,'#4c9aff',true,100,'%');
+  draw('g-mem',d.mem_used_mb,'#8a93a6',true,null,'MB');
+  draw('g-temp',d.temp,'#d2a03e',true,null,'°C');
+  var sum=d.rx.map(function(v,i){return v+(d.tx[i]||0);});
+  var mx=Math.max.apply(null,sum.length?sum:[0])||0,net=sum,nu=' KB/s';
+  if(mx>=1024){net=sum.map(function(v){return v/1024;});nu=' MB/s';}
+  draw('g-net',net,'#5ec8a0',true,null,nu);
+ }).catch(function(){
+  var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot');
+  if(cs)cs.textContent='离线';if(cd)cd.className='dot bad';
+ });
+}
+function refreshDq(){
+ var tc=document.getElementById('tab-cfg');
+ if(!tc||tc.style.display==='none')return;
+ fetch('/api/dnsquery').then(function(r){return r.json();}).then(function(d){
+  var el=document.getElementById('dq-list');if(!el)return;
+  var h='';
+  d.queries.forEach(function(x){h+='<div class="item"><span class="val">'+E(x.ip)+'</span><span style="color:#7d8896">['+E(x.type)+']</span><span class="val">'+E(x.domain)+'</span></div>';});
+  el.innerHTML=h||'<div class="desc">暂无查询</div>';
+  var dc=document.getElementById('dq-count');if(dc)dc.textContent='最近 '+d.queries.length+' 条查询';
+ }).catch(function(){});
+}
+function refreshHitrate(){
+ var el=document.getElementById('dns-hitrate'),det=document.getElementById('dns-hitrate-detail');
+ if(!el)return;
+ el.textContent='测量中…';el.className='num';
+ fetch('/api/dnshitrate').then(function(r){return r.json();}).then(function(d){
+  if(d.ok===false){el.textContent='测量失败';el.className='num bad';return;}
+  el.textContent=d.rate+'%';
+  el.className='num '+(d.rate>=50?'ok':(d.rate>=20?'warn':'bad'));
+  if(det)det.textContent='本地应答 '+d.local+' / 转发 '+d.fwd+' · 缓存 '+d.cache+' 条';
+ }).catch(function(){el.textContent='测量失败';el.className='num bad';});
+}
+function netTest(){
+ var btn=document.getElementById('nt-btn'),bar=document.getElementById('nt-bar'),st=document.getElementById('nt-stage'),pg=document.getElementById('nt-progress'),rs=document.getElementById('nt-result');
+ if(btn.disabled)return;
+ btn.disabled=true;btn.textContent='测试中...';
+ pg.style.display='block';rs.textContent='';
+ var stages=['准备中...','外网延迟测试中...','DNS解析测试中...','设备链路测试中...'];
+ var p=0,t0=Date.now();
+ var timer=setInterval(function(){
+  var el=Date.now()-t0;
+  p=Math.min(97,Math.round(el/5000*97));
+  bar.style.width=p+'%';
+  var si=Math.min(3,Math.floor(el/1600));
+  st.textContent=stages[si]+' '+p+'%';
+ },200);
+ fetch('/api/nettest',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  clearInterval(timer);bar.style.width='100%';st.textContent='完成';
+  btn.disabled=false;btn.textContent='开始实时测试';
+  rs.textContent=(d.ok?'':'错误: ')+d.msg;
+  setTimeout(function(){pg.style.display='none';},1500);
+ }).catch(function(){
+  clearInterval(timer);bar.style.width='100%';st.textContent='失败';
+  btn.disabled=false;btn.textContent='开始实时测试';
+  rs.textContent='测试失败：请检查连接';
+ });
+}
+setInterval(refresh,2000);refresh();
+setInterval(refreshDq,3000);
+setTimeout(refreshCfg,400);
+</script></div></body></html>
