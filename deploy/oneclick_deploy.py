@@ -93,6 +93,10 @@ for d in noip6:
 q(ssh, "cp /tmp/dnsmasq.d/92-noipv6.conf /data/noipv6.conf")
 print("抖音系 %d 域名禁 IPv6（消除黑洞回退）" % len(noip6))
 
+q(ssh, "printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /tmp/dnsmasq.d/93-logqueries.conf")
+q(ssh, "cp /tmp/dnsmasq.d/93-logqueries.conf /data/logqueries.conf")
+print("DNS 查询日志已启用（/tmp/dnsquery.log，面板实时显示）")
+
 # ============ 4. 去广告（anti-AD + yhosts） ============
 step(4, "去广告配置（anti-AD 10万条）")
 q(ssh, "curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw --connect-timeout 15 --max-time 90")
@@ -115,6 +119,7 @@ apply_dns() {
     if [ -s /data/upstreams.conf ]; then cp /data/upstreams.conf /tmp/dnsmasq.d/98-upstream.conf; fi
     if [ -s /data/bytedance.conf ]; then cp /data/bytedance.conf /tmp/dnsmasq.d/95-bytedance.conf; fi
     if [ -s /data/noipv6.conf ]; then cp /data/noipv6.conf /tmp/dnsmasq.d/92-noipv6.conf; fi
+    if [ -s /data/logqueries.conf ]; then cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; fi
     if [ -s /data/antiad.gz ]; then zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; fi
     /etc/init.d/dnsmasq restart 2>/dev/null
 }

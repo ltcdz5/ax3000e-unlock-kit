@@ -54,6 +54,7 @@ apply_dns() {
     echo "addn-hosts=/data/adblock.hosts" > /tmp/dnsmasq.d/99-adblock.conf
     uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
+    [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
     [ -s /data/noresolv.conf ] && cp /data/noresolv.conf /tmp/dnsmasq.d/94-noresolv.conf
     [ -s /data/bytedance.conf ]&& cp /data/bytedance.conf/tmp/dnsmasq.d/95-bytedance.conf
     if [ -s /data/upstreams.conf ]; then cp /data/upstreams.conf /tmp/dnsmasq.d/98-upstream.conf

@@ -292,7 +292,7 @@ def get_config():
         m = re.search(r"query\[([A-Z0-9]+)\] ([^ ]+) from ([0-9.]+)", line)
         if m:
             queries.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
-    cfg["dns_queries"] = queries[-40:]
+    cfg["dns_queries"] = queries[-40:][::-1]
     # 定时任务（#panel 标记的行）
     crontab = sh("cat /etc/crontabs/root 2>/dev/null")
     cfg["cron_tasks"] = [l for l in crontab.splitlines() if l.startswith("#panel")]
@@ -448,7 +448,7 @@ def render_config_html(cfg):
     dq = ""
     for x in cfg.get("dns_queries", []):
         dq += '<div class="item"><span class="val">' + esc(x.get("ip", "")) + '</span><span class="val">[' + esc(x.get("type", "")) + ']</span><span class="val">' + esc(x.get("domain", "")) + '</span></div>'
-    h.append('<div class="cfg-panel"><h3>DNS 查询记录</h3><div class="tip">💡 实时显示各设备最近 DNS 查询（谁在查什么域名）。日志超 300KB 自动清空。</div><div class="desc">最近 ' + str(len(cfg.get("dns_queries", []))) + ' 条查询</div><div class="list">' + dq + '</div></div>')
+    h.append('<div class="cfg-panel"><h3>DNS 查询记录 <span class="badge on">实时</span></h3><div class="tip">💡 实时显示各设备最近 DNS 查询（谁在查什么域名），每 3 秒自动刷新。日志超 300KB 自动清空。</div><div class="desc" id="dq-count">最近 ' + str(len(cfg.get("dns_queries", []))) + ' 条查询</div><div class="list" id="dq-list">' + dq + '</div></div>')
 
     # 定时任务
     ct = ""
@@ -881,6 +881,19 @@ function refresh(){
  });
 }
 setInterval(refresh,2000);refresh();
+function jesc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function refreshDq(){
+ var tc=document.getElementById('tab-cfg');
+ if(!tc||tc.style.display==='none')return;
+ fetch('/api/dnsquery').then(function(r){return r.json();}).then(function(d){
+  var el=document.getElementById('dq-list');if(!el)return;
+  var h='';
+  d.queries.forEach(function(x){h+='<div class="item"><span class="val">'+jesc(x.ip)+'</span><span class="val">['+jesc(x.type)+']</span><span class="val">'+jesc(x.domain)+'</span></div>';});
+  el.innerHTML=h||'<div class="desc">暂无查询</div>';
+  var dc=document.getElementById('dq-count');if(dc)dc.textContent='最近 '+d.queries.length+' 条查询';
+ }).catch(function(){});
+}
+setInterval(refreshDq,3000);
 setTimeout(showUrlMsg,300);
 </script></div></body></html>
 """
@@ -926,6 +939,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path == "/api/dnsquery":
+            queries = []
+            for line in sh("tail -n 80 /tmp/dnsquery.log 2>/dev/null").splitlines():
+                m = re.search(r"query\[([A-Z0-9]+)\] ([^ ]+) from ([0-9.]+)", line)
+                if m:
+                    queries.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
+            queries.reverse()
+            self._send(200, {"queries": queries})
         elif self.path == "/api/config":
             try:
                 self._send(200, get_config())
