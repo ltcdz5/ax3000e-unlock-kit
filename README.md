@@ -86,4 +86,12 @@ v4 脚本特性：毫秒级防重复（marker）、广告列表用本地缓存�
 
 - 2026-08-27：v4 自愈脚本（防重复下载+缓存刷新+重试兜底）；冷启动演练通过；发现并绕开 arn_switch 假接口问题。
 
+## 致谢 Acknowledgements
+
+本项目站在社区成果之上，感谢：
+
+- [lemoeo/AX6S](https://github.com/lemoeo/AX6S) —— `auto_ssh.sh` 的原型与「firewall.include 固化」思路来源；本仓库 `router/auto_ssh.sh` 在其基础上重写（毫秒级防重复触发、去广告列表本地缓存+48h 刷新、后台重试兜底）。
+- 社区公开教程（AX3000T / AX3000E / BE3600 解锁流程的分享者们）—— `xqsystem/start_binding` key 参数注入方法来自相关文章，并非本项目首创。
+- [juewuy/ShellCrash](https://github.com/juewuy/ShellCrash) —— 官方固件上运行 Clash 的流行方案，常与本套件配合使用。
+
 License: MIT
