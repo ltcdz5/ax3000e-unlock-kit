@@ -281,19 +281,14 @@ def get_config():
             mac = p[p.index("lladdr") + 1]
             devices.append({"ip": p[0], "mac": mac, "host": leases.get(mac, ""), "state": p[-1]})
     cfg["devices"] = devices
-    # DNS 查询记录（log-queries，实时；文件过大自动截断）
+    # DNS 查询记录（log-queries，实时；截断必须跟 SIGHUP，否则 dnsmasq 写入偏移不变会造出稀疏空洞）
     try:
         sz = sh("wc -c < /tmp/dnsquery.log")
         if sz.strip().isdigit() and int(sz.strip()) > 300 * 1024:
-            sh("> /tmp/dnsquery.log")
+            sh("> /tmp/dnsquery.log; kill -HUP $(pidof dnsmasq)")
     except Exception:
         pass
-    queries = []
-    for line in sh("tail -n 80 /tmp/dnsquery.log 2>/dev/null").splitlines():
-        m = re.search(r"query\[([A-Z0-9]+)\] ([^ ]+) from ([0-9.]+)", line)
-        if m:
-            queries.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
-    cfg["dns_queries"] = queries[-40:][::-1]
+    cfg["dns_queries"] = get_dns_queries(40)
     # 定时任务（行尾 #panel 标记归属面板的 cron 行）
     crontab = sh("cat /etc/crontabs/root 2>/dev/null")
     cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab.splitlines()
@@ -623,7 +618,8 @@ def api_snapshot():
 
 def get_dns_queries(limit=40):
     out = []
-    for line in sh("tail -n 80 /tmp/dnsquery.log 2>/dev/null").splitlines():
+    # 必须先过滤：dnsmasq 每次查询产生 query/forwarded/reply 多行，直接 tail 会被噪音挤占窗口
+    for line in sh("grep -F 'query[' /tmp/dnsquery.log 2>/dev/null | tail -n 120").splitlines():
         m = re.search(r"query\[([A-Z0-9]+)\] ([^ ]+) from ([0-9.]+)", line)
         if m:
             out.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
