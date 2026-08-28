@@ -62,12 +62,18 @@ grep -q auto_ssh /etc/crontabs/root || echo '* * * * * /bin/sh /data/auto_ssh/au
 ### 3. 部署插件（DNS 上游/去广告/抖音定向/禁 IPv6）
 Windows 下直接运行 `deploy/一键部署.bat <IP>`；脚本会从 `anti-ad.net` 拉最新列表并落到 `/data/` 持久分区。
 
-### 4. 启动监控面板
+### 4. 启动监控面板（Windows 推荐：双击一键启动）
+下载 release 里的完整 zip 解压后，直接双击：
+- `panel/Start-AP-panel.bat` —— 中继/AP 模式（日常推荐，127.0.0.1:8787）
+- `panel/Start-MainRouter-panel.bat` —— 主路由模式（127.0.0.1:8788，含端口转发/QoS/DHCP/防火墙）
+
+首次运行自动装依赖（paramiko<4），按提示输入路由器 IP 和 SSH 密码即可；不要自己构建。
+命令行等价方式：
 ```
 set ROUTER_PASSWD=你的密码 && python panel/router_monitor_ap.py   # 浏览器开 http://127.0.0.1:8787
 ```
 依赖：`pip install -r requirements.txt`（paramiko 必须 <4，5.x 移除了 ssh-rsa，连不上老 dropbear）。
-默认只监听 127.0.0.1；需局域网访问时加 `--lan --token 你的令牌`（HTTP Basic 认证，缺一拒绝启动）。
+两个面板默认都只监听 127.0.0.1；需局域网访问时加 `--lan --token 你的令牌`（HTTP Basic 认证，浏览器原生弹框，缺令牌拒绝启动）。
 
 ## 三层自愈体系（重启不怕）
 

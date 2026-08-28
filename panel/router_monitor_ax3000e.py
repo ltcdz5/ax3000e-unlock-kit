@@ -5,7 +5,7 @@ AX3000E 监控 + 配置中心 v5.1（中文版）
 - 配置中心: 全中文 + 每项带建议设置说明，事件委托实现
 用法: python router_monitor.py
 """
-import sys, os, json, time, threading, argparse, re
+import sys, os, json, time, threading, argparse, re, base64, hmac
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from collections import deque
@@ -1048,6 +1048,10 @@ class Handler(BaseHTTPRequestHandler):
                 cfg_html = '<div class="cfg-grid"><div class="cfg-panel"><h3>错误</h3><div class="desc">' + esc(str(e)) + '</div></div></div>'
                 cfg_json = "{}"
             body = PAGE.replace("%HOST%", HOST).replace('<div class="cfg-grid" id="cfg-grid">加载中...</div>', cfg_html).encode("utf-8")
+            # 防 </script> 截断注入（DHCP 主机名等不可信字段直接进内联 JSON）+ JS 行分隔符
+            for a, b in (("<", "\\u003c"), (">", "\\u003e"),
+                         (chr(0x2028), "\\u2028"), (chr(0x2029), "\\u2029")):
+                cfg_json = cfg_json.replace(a, b)
             body = body.replace(b"<script>", ("<script>window.__CFG__=" + cfg_json + ";").encode("utf-8"), 1)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1073,16 +1077,29 @@ class Handler(BaseHTTPRequestHandler):
             if net != (self.headers.get("Host") or "").lower():
                 self._send(403, {"ok": False, "error": "origin check failed"})
                 return False
-        # 令牌：--lan 模式必配；POST 走 X-Panel-Token 头或 ?token=
-        if PANEL_TOKEN:
-            if self.headers.get("X-Panel-Token") == PANEL_TOKEN:
-                return True
-            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            if PANEL_TOKEN in qs.get("token", []):
-                return True
-            self._send(403, {"ok": False, "error": "unauthorized"})
+        # 令牌：--lan 模式必配；HTTP Basic（浏览器原生弹框，凭证自动附带所有后续请求）
+        if PANEL_TOKEN and not self._auth_ok():
+            self._deny()
             return False
         return True
+
+    def _auth_ok(self):
+        # 与 AP 面板 monitor_web.py 同款：Basic 密码即令牌，用户名忽略
+        hdr = self.headers.get("Authorization", "")
+        if not hdr.startswith("Basic "):
+            return False
+        try:
+            raw = base64.b64decode(hdr[6:]).decode("utf-8", "replace")
+            _, _, pw = raw.partition(":")
+        except Exception:
+            return False
+        return hmac.compare_digest(pw, PANEL_TOKEN)
+
+    def _deny(self):
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="router-panel"')
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_POST(self):
         if not self._gate():
