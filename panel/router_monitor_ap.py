@@ -175,7 +175,7 @@ RESTORE_WHITELIST = (
     "data/auto_ssh/", "data/upstreams.conf", "data/logqueries.conf",
     "data/noipv6.conf", "data/noresolv.conf", "data/bytedance.conf",
     "data/microsoft.conf", "data/awavenue.gz", "data/antiad.gz",
-    "data/.adblock_off",
+    "data/custom.conf", "data/.adblock_off",
 )
 
 
@@ -710,7 +710,8 @@ def do_action(action, params=None):
         d = params.get("domain", "").strip().lower()
         if not re.match(r"^[a-z0-9\-\.]+$", d):
             return "无效域名"
-        sh("echo 'address=/" + d + "/0.0.0.0' >> /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
+        sh("echo 'address=/" + d + "/0.0.0.0' >> /tmp/dnsmasq.d/97-custom.conf; "
+           "cp /tmp/dnsmasq.d/97-custom.conf /data/custom.conf; /etc/init.d/dnsmasq restart")
         return "已屏蔽 " + d
     if action == "ad_custom_del":
         d = params.get("domain", "").strip().lower()
@@ -723,7 +724,7 @@ def do_action(action, params=None):
             return "未找到屏蔽记录 " + d
         if not sh_write("cat > " + path, ("\n".join(keep) + "\n") if keep else ""):
             return "写入失败"
-        sh("/etc/init.d/dnsmasq restart")
+        sh("cp " + path + " /data/custom.conf; /etc/init.d/dnsmasq restart")
         return "已解除屏蔽 " + d
     if action == "wifi_channel":
         band = params.get("band", "5g")
