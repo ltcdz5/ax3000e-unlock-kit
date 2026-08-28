@@ -20,6 +20,7 @@ def _load(name, filename):
 
 
 mw = _load("monitor_web_ut", "monitor_web.py")
+sys.modules["monitor_web"] = mw     # 面板 import monitor_web 时复用同一份模块对象，避免双实例
 main_panel = _load("main_panel_ut", "router_monitor_ax3000e.py")
 ap_panel = _load("ap_panel_ut", "router_monitor_ap.py")
 
@@ -67,15 +68,15 @@ def test_auth_ok_basic_scheme():
 
 def test_parse_act_body_json_and_form():
     import json
-    a, p = mw.parse_act_body('{"action":"led_schedule","params":{"on":"08:00"}}')
-    assert (a, p) == ("led_schedule", {"on": "08:00"})
+    a, p, j = mw.parse_act_body('{"action":"led_schedule","params":{"on":"08:00"}}')
+    assert (a, p, j) == ("led_schedule", {"on": "08:00"}, True)
     from urllib.parse import quote
     form = "json=" + quote(json.dumps({"action": "reboot", "params": {"confirm": "yes"}}))
-    a2, p2 = mw.parse_act_body(form)
-    assert a2 == "reboot" and p2 == {"confirm": "yes"}
+    a2, p2, j2 = mw.parse_act_body(form)
+    assert a2 == "reboot" and p2 == {"confirm": "yes"} and j2 is False
     form2 = form + "&extra=1"
-    a3, p3 = mw.parse_act_body(form2)
-    assert p3.get("extra") == "1"
+    a3, p3, j3 = mw.parse_act_body(form2)
+    assert p3.get("extra") == "1" and j3 is False
 
 
 # ---------- 主面板：写动作参数白名单 ----------
@@ -120,3 +121,76 @@ def test_ap_restore_whitelist_blocks_traversal_and_lookalikes():
     assert not ap_panel._whitelisted("etc/crontabs/rootxxx")   # 精确匹配，不许前缀误中
     assert not ap_panel._whitelisted("/etc/passwd")            # 绝对路径
     assert not ap_panel._whitelisted("data/../../etc/shadow")
+
+
+# ---------- /api/act 应答格式：解析与应答判定同源（真实 HTTP 回环） ----------
+
+import json
+import threading
+import http.client
+import urllib.parse
+from http.server import ThreadingHTTPServer
+
+
+class _ActServer:
+    """起真实共享层服务器（随机端口），do_action 可注入。"""
+
+    def __init__(self, do_action):
+        mw.Handler.ctx = {"lan": False, "token": "", "do_action": do_action}
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), mw.Handler)
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def stop(self):
+        self.srv.shutdown()
+
+
+def _post(port, body, headers=None):
+    assert isinstance(port, int) and 0 < port < 65536
+    h = {"Content-Type": "application/x-www-form-urlencoded"}   # 模拟 curl/表单默认
+    if headers:
+        h.update(headers)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        conn.request("POST", "/api/act", body=body, headers=h)
+        r = conn.getresponse()
+        return r.status, dict(r.getheaders()), r.read().decode("utf-8", "replace")
+    finally:
+        conn.close()
+
+
+def test_act_json_body_with_form_content_type_returns_json():
+    """审计案例①：curl -d '{...}' 默认 form Content-Type → 应答仍应为 200 JSON。"""
+    s = _ActServer(lambda a, p: "pong")
+    try:
+        code, _, body = _post(s.port, b'{"action":"ping","params":{}}')
+        assert code == 200
+        assert json.loads(body) == {"ok": True, "msg": "pong"}
+    finally:
+        s.stop()
+
+
+def test_act_form_error_redirects_with_friendly_msg():
+    """审计案例②：表单请求 + do_action 抛异常 → 302 回跳带友好消息，不裸渲染 JSON。"""
+    def boom(a, p):
+        raise RuntimeError("路由器连接超时")
+    s = _ActServer(boom)
+    try:
+        body = ("json=" + urllib.parse.quote(json.dumps({"action": "x", "params": {}}))).encode()
+        code, headers, _ = _post(s.port, body)
+        assert code == 302
+        loc = headers.get("Location", "")
+        assert loc.startswith("/?msg=") and "操作出错" in urllib.parse.unquote(loc)
+    finally:
+        s.stop()
+
+
+def test_act_form_success_redirects():
+    s = _ActServer(lambda a, p: "已完成")
+    try:
+        body = ("json=" + urllib.parse.quote(json.dumps({"action": "x", "params": {}}))).encode()
+        code, headers, _ = _post(s.port, body)
+        assert code == 302
+        assert "msg=" in headers.get("Location", "")
+    finally:
+        s.stop()

@@ -77,18 +77,19 @@ def escape_inline_json(s):
 
 
 def parse_act_body(raw):
-    """POST /api/act 请求体：JSON 或表单（json= 字段，其余字段并入 params）。"""
+    """POST /api/act 请求体：JSON 或表单（json= 字段，其余字段并入 params）。
+    返回 (action, params, is_json)——is_json 同时决定应答格式，解析与应答判定同源。"""
     raw = raw or ""
     if raw.lstrip().startswith("{"):
         data = json.loads(raw)
-        return data.get("action", ""), dict(data.get("params") or {})
+        return data.get("action", ""), dict(data.get("params") or {}), True
     qs = urllib.parse.parse_qs(raw)
     data = json.loads(qs.get("json", ["{}"])[0])
     params = dict(data.get("params") or {})
     for k, v in qs.items():
         if k != "json":
             params[k] = v[0]
-    return data.get("action", ""), params
+    return data.get("action", ""), params, False
 
 
 # ---------- Handler ----------
@@ -174,15 +175,22 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         c = self.ctx
         if p == "/api/act" and c.get("do_action"):
+            is_json = False
             try:
                 ln = int(self.headers.get("Content-Length", 0))
                 raw = self.rfile.read(ln).decode("utf-8", "replace")
-                action, params = parse_act_body(raw)
+                action, params, is_json = parse_act_body(raw)
                 msg = c["do_action"](action, params)
             except Exception as e:
-                self._send(200, {"ok": False, "error": str(e)})
+                # 应答形态与解析形态同源：表单提交出错也走 302 回跳，浏览器不再裸渲染 JSON
+                if is_json:
+                    self._send(200, {"ok": False, "error": str(e)})
+                else:
+                    self.send_response(302)
+                    self.send_header("Location", "/?msg=" + urllib.parse.quote("操作出错: " + str(e)))
+                    self.end_headers()
                 return
-            if (self.headers.get("Content-Type") or "").startswith("application/json"):
+            if is_json:
                 self._send(200, {"ok": True, "msg": msg})
             else:
                 # 表单提交（浏览器按钮）：302 回首页经 ?msg= 展示
