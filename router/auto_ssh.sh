@@ -1,11 +1,32 @@
 #!/bin/sh
-# auto_ssh.sh v2 (2026-08-27) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
+# auto_ssh.sh v5 (2026-08-28) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
 # 由 firewall include 触发（每次防火墙重载都会跑），所以必须毫秒级返回。
+# v5: 去广告改为 anti-AD(主) + AWAvenue(国内补充) 双列表，缓存超 48h 自动联网刷新，
+#     并补一条每日 refresh 定时任务；下载不达标绝不覆盖在用的好列表。
 
 auto_ssh_dir="/data/auto_ssh"
 host_key="/etc/dropbear/dropbear_rsa_host_key"
 host_key_bk="${auto_ssh_dir}/dropbear_rsa_host_key"
 marker="/tmp/.dns_ready"
+
+antiad_url="https://anti-ad.net/anti-ad-for-dnsmasq.conf"
+awavenue_urls="https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf"
+# 抖音系一律豁免：本机实测屏蔽这些域名会让抖音视频取源掉进黑洞回退
+ad_skip="byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance"
+
+stale() {  # 缓存缺失或超过 48 小时 → 需要联网刷新
+    [ -s "$1" ] || return 0
+    [ -n "$(find "$1" -mmin +2880 2>/dev/null)" ]
+}
+
+wait_net() {
+    w=0
+    while [ $w -lt 12 ]; do
+        ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1 && return 0
+        w=$((w+1)); sleep 5
+    done
+    return 1
+}
 
 ensure() {
     [ -f $host_key_bk ] && ln -sf $host_key_bk $host_key
@@ -42,7 +63,52 @@ unlock() {
     fi
 }
 
+refresh_antiad() {
+    curl -sL "$antiad_url" -o /tmp/antiad_raw --connect-timeout 15 --max-time 90
+    grep -vE "$ad_skip" /tmp/antiad_raw > /tmp/antiad_new 2>/dev/null
+    rm -f /tmp/antiad_raw
+    # 体积 + 条目数双重门槛：下载被截断或返回错误页时绝不覆盖在用的好列表
+    if [ "$(wc -c < /tmp/antiad_new 2>/dev/null)" -le 500000 ] || [ "$(wc -l < /tmp/antiad_new 2>/dev/null)" -le 1000 ]; then
+        rm -f /tmp/antiad_new
+        logger -t auto_ssh "anti-AD download invalid, keep cache"
+        return 1
+    fi
+    mv -f /tmp/antiad_new /tmp/dnsmasq.d/96-antiad.conf
+    gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz.new 2>/dev/null \
+        && mv -f /data/antiad.gz.new /data/antiad.gz
+    logger -t auto_ssh "anti-AD refreshed: $(wc -l < /tmp/dnsmasq.d/96-antiad.conf)"
+}
+
+refresh_awavenue() {
+    for u in $awavenue_urls; do
+        curl -sL "$u" -o /tmp/awv_raw --connect-timeout 15 --max-time 60
+        [ "$(wc -c < /tmp/awv_raw 2>/dev/null)" -gt 12000 ] && break
+        rm -f /tmp/awv_raw
+    done
+    [ -s /tmp/awv_raw ] || { logger -t auto_ssh "AWAvenue download failed, keep cache"; return 1; }
+    grep '^address=/' /tmp/awv_raw | grep -vE "$ad_skip" > /tmp/awv_new 2>/dev/null
+    rm -f /tmp/awv_raw
+    if [ "$(wc -l < /tmp/awv_new 2>/dev/null)" -le 300 ]; then
+        rm -f /tmp/awv_new
+        logger -t auto_ssh "AWAvenue download invalid, keep cache"
+        return 1
+    fi
+    mv -f /tmp/awv_new /tmp/dnsmasq.d/90-awavenue.conf
+    gzip -c /tmp/dnsmasq.d/90-awavenue.conf > /data/awavenue.gz.new 2>/dev/null \
+        && mv -f /data/awavenue.gz.new /data/awavenue.gz
+    logger -t auto_ssh "AWAvenue refreshed: $(wc -l < /tmp/dnsmasq.d/90-awavenue.conf)"
+}
+
+ensure_refresh_cron() {
+    # 固件偶尔重建 crontab，所以每次开机都补一次；已存在则完全不动，避免重启 cron
+    grep -q 'auto_ssh.sh refresh' /etc/crontabs/root 2>/dev/null && return 0
+    echo '30 4 * * * /bin/sh /data/auto_ssh/auto_ssh.sh refresh' >> /etc/crontabs/root
+    /etc/init.d/cron restart 2>/dev/null
+    logger -t auto_ssh "daily adblock refresh cron added"
+}
+
 apply_dns() {
+    ensure_refresh_cron
     # 本次开机已就绪则直接返回（重载不重复干活）
     if [ -f $marker ] || { [ -s /tmp/dnsmasq.d/96-antiad.conf ] && [ -s /tmp/dnsmasq.d/98-upstream.conf ] && pidof dnsmasq >/dev/null; }; then
         touch $marker; return 0
@@ -54,10 +120,10 @@ apply_dns() {
     # 面板可持久关闭去广告（/data/.adblock_off），关闭时开机不拉起、并清掉运行态
     adblock_on=1
     [ -f /data/.adblock_off ] && adblock_on=0
-    if [ "$adblock_on" = "1" ]; then
-        echo "addn-hosts=/data/adblock.hosts" > /tmp/dnsmasq.d/99-adblock.conf
-    else
-        rm -f /tmp/dnsmasq.d/99-adblock.conf /tmp/dnsmasq.d/96-antiad.conf
+    # yhosts（/data/adblock.hosts）上游 2025-03 已归档停更，且 90% 与 anti-AD 重合 → 不再加载
+    rm -f /tmp/dnsmasq.d/99-adblock.conf
+    if [ "$adblock_on" != "1" ]; then
+        rm -f /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/90-awavenue.conf
     fi
     uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
@@ -68,26 +134,19 @@ apply_dns() {
     if [ -s /data/upstreams.conf ]; then cp /data/upstreams.conf /tmp/dnsmasq.d/98-upstream.conf
     else printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=114.114.114.114\nserver=4.2.2.2\n' > /tmp/dnsmasq.d/98-upstream.conf
     fi
-    # 优先用本地缓存恢复广告表；缓存超过48小时才联网刷新
-    if [ "$adblock_on" = "1" ] && [ -s /data/antiad.gz ]; then zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; refresh=1; fi
+    if [ "$adblock_on" = "1" ]; then
+        [ -s /data/antiad.gz ]   && zcat /data/antiad.gz   > /tmp/dnsmasq.d/96-antiad.conf   2>/dev/null
+        [ -s /data/awavenue.gz ] && zcat /data/awavenue.gz > /tmp/dnsmasq.d/90-awavenue.conf 2>/dev/null
+    fi
     /etc/init.d/dnsmasq restart 2>/dev/null
 
-    age_ok=$(find /data/antiad.gz -mmin +2880 2>/dev/null)
-    if [ "$adblock_on" = "1" ] && { [ "$refresh" != "1" ] || [ -n "$age_ok" ]; }; then
+    if [ "$adblock_on" = "1" ] && { stale /data/antiad.gz || stale /data/awavenue.gz; }; then
         (
-            w=0
-            while [ $w -lt 12 ]; do ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1 && break; w=$((w+1)); sleep 5; done
-            curl -sL "https://anti-ad.net/anti-ad-for-dnsmasq.conf" -o /tmp/antiad_raw --connect-timeout 15 --max-time 90
-            if [ "$(wc -c < /tmp/antiad_raw)" -gt 500000 ]; then
-                grep -vE "byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance" /tmp/antiad_raw > /tmp/dnsmasq.d/96-antiad.conf
-                gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz.new 2>/dev/null \
-                    && mv -f /data/antiad.gz.new /data/antiad.gz
-                /etc/init.d/dnsmasq restart 2>/dev/null
-                logger -t auto_ssh "anti-AD refreshed"
-            else
-                rm -f /tmp/antiad_raw
-                logger -t auto_ssh "anti-AD download failed, keep cache"
-            fi
+            wait_net || exit 0
+            r=0
+            stale /data/antiad.gz   && refresh_antiad   && r=1
+            stale /data/awavenue.gz && refresh_awavenue && r=1
+            [ "$r" = "1" ] && /etc/init.d/dnsmasq restart 2>/dev/null
         ) &
     fi
     touch $marker
@@ -116,6 +175,17 @@ main() {
     case "$1" in
     install)   install ;;
     uninstall) uninstall ;;
+    refresh)
+        # 每日定时刷新：去广告被持久关闭时不动任何东西
+        [ -f /data/.adblock_off ] && exit 0
+        (
+            wait_net || exit 0
+            r=0
+            refresh_antiad   && r=1
+            refresh_awavenue && r=1
+            [ "$r" = "1" ] && /etc/init.d/dnsmasq restart 2>/dev/null
+        ) &
+        ;;
     *) unlock; apply_dns & return ;;
     esac
 }

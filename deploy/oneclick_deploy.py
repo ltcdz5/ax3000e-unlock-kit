@@ -70,11 +70,16 @@ else:
 # ============ 3. 基础配置（DNS 上游 / 定向 / noipv6） ============
 step(3, "DNS 优化配置")
 up = ["180.184.1.1", "180.184.2.2", "223.5.5.5", "119.29.29.29", "114.114.114.114", "8.8.8.8", "9.9.9.9", "4.2.2.2"]
-q(ssh, "rm -f /tmp/dnsmasq.d/98-upstream.conf")
-for u in up:
-    q(ssh, "echo 'server=" + u + "' >> /tmp/dnsmasq.d/98-upstream.conf")
-q(ssh, "cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
-print("DNS 8 上游已配置（字节x2 + 国内x3 + 海外x3）")
+have = q(ssh, "test -s /data/upstreams.conf && grep -c '^server=' /data/upstreams.conf").strip()
+if have.isdigit() and int(have) > 0:
+    # 重跑部署不该抹掉用户在面板里自己配的上游
+    print("保留现有 %s 个 DNS 上游（如需重置：删 /data/upstreams.conf 后重跑）" % have)
+else:
+    q(ssh, "rm -f /tmp/dnsmasq.d/98-upstream.conf")
+    for u in up:
+        q(ssh, "echo 'server=" + u + "' >> /tmp/dnsmasq.d/98-upstream.conf")
+    q(ssh, "cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
+    print("DNS 8 上游已配置（字节x2 + 国内x3 + 海外x3）")
 
 btd = ["douyin.com", "douyinstatic.com", "snssdk.com", "byteimg.com", "bytedance.com",
        "toutiao.com", "ixigua.com", "douyinpic.com", "amemv.com", "bytecdn.cn", "pstatp.com", "bytefcdn.com"]
@@ -96,8 +101,8 @@ q(ssh, "printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /tmp/dnsmasq.
 q(ssh, "cp /tmp/dnsmasq.d/93-logqueries.conf /data/logqueries.conf")
 print("DNS 查询日志已启用（/tmp/dnsquery.log，面板实时显示）")
 
-# ============ 4. 去广告（anti-AD + yhosts） ============
-step(4, "去广告配置（anti-AD 10万条）")
+# ============ 4. 去广告（anti-AD + AWAvenue） ============
+step(4, "去广告配置（anti-AD 10万条 + AWAvenue 国内补充）")
 q(ssh, "curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw --connect-timeout 15 --max-time 90")
 raw_sz = q(ssh, "wc -c < /tmp/antiad_raw 2>/dev/null").strip()
 # 与面板/auto_ssh 相同的门槛：下载不完整绝不安装、绝不覆盖 /data 缓存
@@ -114,6 +119,35 @@ else:
         q(ssh, "mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; "
                "gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz.new && mv -f /data/antiad.gz.new /data/antiad.gz; rm -f /tmp/antiad_raw")
         print("anti-AD: %s 条（抖音系已过滤）" % n)
+
+# AWAvenue：国内 App 广告/跟踪补充列表（原生 dnsmasq 格式），带镜像回退
+AWAVENUE_URLS = [
+    "https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf",
+    "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf",
+]
+awv_ok = False
+for _u in AWAVENUE_URLS:
+    q(ssh, "curl -sL '%s' -o /tmp/awv_raw --connect-timeout 15 --max-time 60" % _u)
+    awv_sz = q(ssh, "wc -c < /tmp/awv_raw 2>/dev/null").strip()
+    if awv_sz.isdigit() and int(awv_sz) > 12000:
+        awv_ok = True
+        break
+    q(ssh, "rm -f /tmp/awv_raw")
+if not awv_ok:
+    print("[!] AWAvenue 两个镜像均未下载成功，跳过安装以保留现有缓存")
+else:
+    q(ssh, "grep '^address=/' /tmp/awv_raw | grep -vE 'byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance' "
+           "> /tmp/awv_new.conf 2>/dev/null; rm -f /tmp/awv_raw")
+    m = q(ssh, "wc -l < /tmp/awv_new.conf 2>/dev/null").strip()
+    if not (m.isdigit() and int(m) > 300):
+        q(ssh, "rm -f /tmp/awv_new.conf")
+        print("[!] AWAvenue 有效条目异常（%s 行），跳过安装以保留现有缓存" % (m or "0"))
+    else:
+        q(ssh, "mv -f /tmp/awv_new.conf /tmp/dnsmasq.d/90-awavenue.conf; "
+               "gzip -c /tmp/dnsmasq.d/90-awavenue.conf > /data/awavenue.gz.new && mv -f /data/awavenue.gz.new /data/awavenue.gz")
+        print("AWAvenue: %s 条（抖音系已过滤）" % m)
+# 原 yhosts 列表上游已归档停更，且 90% 与 anti-AD 重合 → 不再加载（/data 上的旧文件保留备查）
+q(ssh, "rm -f /tmp/dnsmasq.d/99-adblock.conf")
 
 # ============ 5. 自愈脚本 auto_ssh + 应用 ============
 step(5, "自愈脚本部署（auto_ssh）")

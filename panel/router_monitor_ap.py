@@ -253,7 +253,7 @@ def get_config():
         "cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null",                                 # 0
         "uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null",                                  # 1
         "test -f /tmp/dnsmasq.d/96-antiad.conf && wc -l < /tmp/dnsmasq.d/96-antiad.conf",  # 2
-        "test -f /data/adblock.hosts && wc -l < /data/adblock.hosts",                      # 3
+        "test -f /tmp/dnsmasq.d/90-awavenue.conf && wc -l < /tmp/dnsmasq.d/90-awavenue.conf",  # 3
         "ls /tmp/dnsmasq.d/ 2>/dev/null; test -f /data/.adblock_off && echo ADOFF",           # 4
         "cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null",                                   # 5
         "ps | grep dropbear | grep -v grep",                                               # 6
@@ -272,9 +272,11 @@ def get_config():
         "[ $(wc -c < /tmp/dnsquery.log 2>/dev/null || echo 0) -gt 307200 ] "
         "&& { > /tmp/dnsquery.log; kill -HUP $(pidof dnsmasq); }; "
         "grep -F 'query[' /tmp/dnsquery.log 2>/dev/null | tail -n 120",                    # 18
+        "stat -c %Y /data/awavenue.gz 2>/dev/null",                                        # 19
+        "stat -c %Y /data/antiad.gz 2>/dev/null",                                          # 20
     ])).split("@@")
-    if len(parts) < 19:
-        parts += [""] * (19 - len(parts))
+    if len(parts) < 21:
+        parts += [""] * (21 - len(parts))
 
     def seg(i):
         return parts[i].strip()
@@ -287,7 +289,16 @@ def get_config():
                             for l in parts[0].splitlines() if l.startswith("server=")]
     cfg["cache_size"] = seg(1) or "150"
     cfg["adblock_antiad"] = num(2)
-    cfg["adblock_yhosts"] = num(3)
+    cfg["adblock_domestic"] = num(3)
+
+    def age(i):
+        s = seg(i)
+        if not s.isdigit():
+            return None
+        return max(0.0, round((time.time() - int(s)) / 86400.0, 1))
+
+    cfg["adblock_domestic_age_d"] = age(19)
+    cfg["adblock_antiad_age_d"] = age(20)
     cfg["adblock_enabled"] = "ADOFF" not in parts[4]
     cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip()
                              for l in parts[5].splitlines() if l.startswith("address=/")]
@@ -455,35 +466,81 @@ def get_dns_stats():
     return {"rate": round(local * 100.0 / total, 1) if total else 0, "local": local, "fwd": fwd, "cache": csize}
 
 
+AD_SKIP = "byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance"
+AWAVENUE_URLS = [
+    "https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf",
+    "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf",
+]
+
+
+def _adblock_off():
+    return sh("test -f /data/.adblock_off && echo y") == "y"
+
+
+def update_antiad():
+    # 下载耗时远超 sh() 默认超时，必须单独放宽，否则读流超时会被判失败并重复触发下载
+    sh("curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw "
+       "--connect-timeout 15 --max-time 90", timeout=100)
+    raw = sh("wc -c < /tmp/antiad_raw 2>/dev/null").strip()
+    # 与 auto_ssh.sh 相同的体积门槛：下载不完整时绝不覆盖已有缓存
+    if not raw.isdigit() or int(raw) < 500000:
+        sh("rm -f /tmp/antiad_raw")
+        return "下载未完成（%s 字节），已保留原有 anti-AD 缓存" % (raw or "0")
+    sh("grep -vE '" + AD_SKIP + "' /tmp/antiad_raw > /tmp/antiad_new.conf")
+    n = sh("wc -l < /tmp/antiad_new.conf 2>/dev/null").strip()
+    if not n.isdigit() or int(n) < 1000:
+        sh("rm -f /tmp/antiad_raw /tmp/antiad_new.conf")
+        return "过滤后条目异常（%s 行），已保留原有 anti-AD 缓存" % (n or "0")
+    sh("gzip -c /tmp/antiad_new.conf > /data/antiad.gz.new && mv -f /data/antiad.gz.new /data/antiad.gz; "
+       "rm -f /tmp/antiad_raw")
+    if _adblock_off():
+        return "缓存已更新 " + n + " 条（去广告处于关闭状态，开启后生效）"
+    sh("mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; /etc/init.d/dnsmasq restart")
+    return "已更新 " + n + " 条"
+
+
+def update_awavenue():
+    got = False
+    for u in AWAVENUE_URLS:
+        sh("curl -sL '" + u + "' -o /tmp/awv_raw --connect-timeout 15 --max-time 60", timeout=80)
+        sz = sh("wc -c < /tmp/awv_raw 2>/dev/null").strip()
+        if sz.isdigit() and int(sz) > 12000:
+            got = True
+            break
+        sh("rm -f /tmp/awv_raw")
+    if not got:
+        return "两个镜像均未下载成功，已保留原有 AWAvenue 缓存"
+    sh("grep '^address=/' /tmp/awv_raw | grep -vE '" + AD_SKIP + "' > /tmp/awv_new.conf; rm -f /tmp/awv_raw")
+    n = sh("wc -l < /tmp/awv_new.conf 2>/dev/null").strip()
+    if not n.isdigit() or int(n) < 300:
+        sh("rm -f /tmp/awv_new.conf")
+        return "有效条目异常（%s 行），已保留原有 AWAvenue 缓存" % (n or "0")
+    sh("gzip -c /tmp/awv_new.conf > /data/awavenue.gz.new && mv -f /data/awavenue.gz.new /data/awavenue.gz")
+    if _adblock_off():
+        return "缓存已更新 " + n + " 条（去广告处于关闭状态，开启后生效）"
+    sh("mv -f /tmp/awv_new.conf /tmp/dnsmasq.d/90-awavenue.conf; /etc/init.d/dnsmasq restart")
+    return "已更新 " + n + " 条"
+
+
 def do_action(action, params=None):
     params = params or {}
     if action == "adblock_toggle":
         off = sh("test -f /data/.adblock_off && echo y") == "y"
         if off:
-            sh("rm -f /data/.adblock_off; [ -s /data/antiad.gz ] && zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; "
-               "echo 'addn-hosts=/data/adblock.hosts' > /tmp/dnsmasq.d/99-adblock.conf; /etc/init.d/dnsmasq restart")
-            return "去广告已开启（anti-AD 主列表 + yhosts，自 /data 缓存恢复）"
-        sh("touch /data/.adblock_off; rm -f /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/99-adblock.conf; /etc/init.d/dnsmasq restart")
-        return "去广告已全部关闭（含 anti-AD 10万条主列表）；状态持久化，重启后自愈脚本也不会拉起"
+            sh("rm -f /data/.adblock_off /tmp/dnsmasq.d/99-adblock.conf; "
+               "[ -s /data/antiad.gz ] && zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; "
+               "[ -s /data/awavenue.gz ] && zcat /data/awavenue.gz > /tmp/dnsmasq.d/90-awavenue.conf 2>/dev/null; "
+               "/etc/init.d/dnsmasq restart")
+            return "去广告已开启（anti-AD 主列表 + AWAvenue 国内补充，自 /data 缓存恢复）"
+        sh("touch /data/.adblock_off; rm -f /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/90-awavenue.conf "
+           "/tmp/dnsmasq.d/99-adblock.conf; /etc/init.d/dnsmasq restart")
+        return "去广告已全部关闭（含 anti-AD 主列表 + AWAvenue）；状态持久化，重启后自愈脚本也不会拉起"
+    if action == "awavenue_update":
+        return update_awavenue()
     if action == "antiad_update":
-        # 下载耗时远超 sh() 默认超时，必须单独放宽，否则读流超时会被判失败并重复触发下载
-        sh("curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw "
-           "--connect-timeout 15 --max-time 90", timeout=100)
-        raw = sh("wc -c < /tmp/antiad_raw 2>/dev/null").strip()
-        # 与 auto_ssh.sh 相同的体积门槛：下载不完整时绝不覆盖已有缓存
-        if not raw.isdigit() or int(raw) < 500000:
-            sh("rm -f /tmp/antiad_raw")
-            return "下载未完成（%s 字节），已保留原有 anti-AD 缓存" % (raw or "0")
-        sh("grep -vE 'byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance' /tmp/antiad_raw > /tmp/antiad_new.conf")
-        n = sh("wc -l < /tmp/antiad_new.conf 2>/dev/null").strip()
-        if not n.isdigit() or int(n) < 1000:
-            sh("rm -f /tmp/antiad_raw /tmp/antiad_new.conf")
-            return "过滤后条目异常（%s 行），已保留原有 anti-AD 缓存" % (n or "0")
-        sh("gzip -c /tmp/antiad_new.conf > /data/antiad.gz.new && mv -f /data/antiad.gz.new /data/antiad.gz; rm -f /tmp/antiad_raw")
-        if sh("test -f /data/.adblock_off && echo y") == "y":
-            return "anti-AD 缓存已更新: " + n + " 条（去广告处于关闭状态，开启后生效）"
-        sh("mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; /etc/init.d/dnsmasq restart")
-        return "anti-AD 已更新: " + n + " 条"
+        return update_antiad()
+    if action == "adblock_update":
+        return "anti-AD: " + update_antiad() + " ｜ AWAvenue: " + update_awavenue()
     if action == "dnsmasq_restart":
         sh("/etc/init.d/dnsmasq restart")
         return "dnsmasq 已重启"

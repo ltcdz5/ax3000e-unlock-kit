@@ -164,10 +164,11 @@ function renderCfg(c){
   desc:'命中率 <b id="dns-hitrate" class="num">测量中…</b> <span id="dns-hitrate-detail" style="color:#7d8896"></span>',
   body:inpRow(['<input class="inp num" id="cache-size" value="'+E(c.cache_size)+'">',B('cache_save','保存',{},'',''),'<button class="btn gray" type="button" onclick="refreshHitrate()">刷新命中率</button>'])}));
  var adOn=!!c.adblock_enabled;
+ var ageTxt=function(v){return v==null?'未安装':v+' 天前';};
  h.push(card({title:'去广告',badge:'<span class="badge '+(adOn?'on':'off')+'">'+(adOn?'已开':'已关')+'</span>',
-  tip:'anti-AD + yhosts，DNS 请求经过本路由器时生效。',
-  desc:'anti-AD '+E(c.adblock_antiad)+' 条 / yhosts '+E(c.adblock_yhosts)+' 条',
-  row:B('adblock_toggle',(adOn?'关闭':'开启')+'去广告',{},'确定'+(adOn?'关闭':'开启')+'去广告吗？','')+B('antiad_update','更新列表',{},'重新下载 anti-AD 列表？','gray')}));
+  tip:'anti-AD（主）+ AWAvenue（国内补充）。开机与每日 04:30 自动刷新，缓存超 48h 才联网。原 yhosts 上游已归档停更，故弃用。',
+  desc:'anti-AD '+E(c.adblock_antiad)+' 条（'+ageTxt(c.adblock_antiad_age_d)+'） · AWAvenue '+E(c.adblock_domestic)+' 条（'+ageTxt(c.adblock_domestic_age_d)+'）',
+  row:B('adblock_toggle',(adOn?'关闭':'开启')+'去广告',{},'确定'+(adOn?'关闭':'开启')+'去广告吗？','')+B('adblock_update','立即更新列表',{},'重新下载 anti-AD 与 AWAvenue 两个列表？','gray')}));
  var cust=(c.custom_adblock||[]).map(function(d){return item('<span class="val">'+E(d)+'</span>',B('ad_custom_del','解除',{domain:d},'解除屏蔽 '+d+' 吗？','red'));});
  h.push(card({title:'自定义屏蔽域名',tip:'去广告列表没覆盖的域名手动加这里（不含 http 前缀）。',
   desc:'已屏蔽 '+(c.custom_adblock||[]).length+' 个',body:inpRow([inp('ad-domain','例: ads.example.com','180px'),B('ad_custom_add','屏蔽',{},'','')])+lst(cust,'暂无自定义屏蔽')}));
