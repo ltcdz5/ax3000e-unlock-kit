@@ -168,6 +168,90 @@ def list_backups():
     return items[:8]
 
 
+# 恢复白名单：只解这些路径，其它一律不动（yhosts 遗迹/临时垃圾不入内）
+RESTORE_WHITELIST = (
+    "etc/config/", "etc/crontabs/root", "tmp/dnsmasq.d/",
+    "data/auto_ssh/", "data/upstreams.conf", "data/logqueries.conf",
+    "data/noipv6.conf", "data/noresolv.conf", "data/bytedance.conf",
+    "data/awavenue.gz", "data/antiad.gz", "data/.adblock_off",
+)
+
+
+def _whitelisted(name):
+    return any(name == p.rstrip("/") or name.startswith(p) for p in RESTORE_WHITELIST)
+
+
+def upload_file(remote, blob, timeout=90):
+    """分块经 stdin 上传字节流到路由器；写后回读字节数校验，不符返回 False"""
+    global ssh_client
+    with ssh_lock:
+        for _ in range(2):
+            try:
+                if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
+                    ssh_client = ssh_connect()
+                stdin, stdout, stderr = ssh_client.exec_command("cat > " + remote, timeout=timeout)
+                for i in range(0, len(blob), 16384):
+                    stdin.write(blob[i:i + 16384])
+                    stdin.flush()
+                stdin.channel.shutdown_write()
+                stdout.read()
+                after = _sh_nolock("wc -c < %s 2>/dev/null" % remote)
+                if after.isdigit() and int(after) == len(blob):
+                    return True
+                _sh_nolock("rm -f " + remote)
+            except Exception:
+                try:
+                    ssh_client = ssh_connect()
+                except Exception:
+                    time.sleep(2)
+        return False
+
+
+def restore_backup(name):
+    """从本地备份恢复路由器配置。白名单精解（本地重打瘦身包）→ 恢复前自动备份现状
+    → /data 净增空间预检 → 上传校验 → 解压 + 清理遗迹 + 重启服务。"""
+    import io
+    import tarfile
+    local = os.path.join(BACKUP_DIR, os.path.basename(name))
+    if not name.endswith(".tar.gz") or not os.path.isfile(local):
+        return "备份文件不存在"
+    pre = make_backup()
+    if not pre:
+        return "恢复中止：无法先备份当前状态（SSH 异常？），请先手动备份成功再恢复"
+    try:
+        with tarfile.open(local, "r:gz") as tf:
+            members = [m for m in tf.getmembers() if _whitelisted(m.name)]
+            if not members:
+                return "该备份不含可恢复的配置项（白名单外）"
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as out:
+                for m in members:
+                    out.addfile(m, tf.extractfile(m) if m.isfile() else None)
+            slim = buf.getvalue()
+    except Exception as e:
+        return "备份文件损坏：" + str(e)
+    # /data 净增预检：覆盖已有文件不算增长，只算新增字节（卷仅 1.7MB）
+    persistent = [m for m in members if m.isfile() and not m.name.startswith("tmp/")]
+    growth = 0
+    if persistent:
+        sizes = sh("for f in " + " ".join("/" + m.name for m in persistent) +
+                   "; do wc -c < $f 2>/dev/null || echo 0; done").split()
+        for m, s in zip(persistent, sizes):
+            growth += max(0, m.size - (int(s) if s.isdigit() else 0))
+    free = sh("df /data | tail -1 | awk '{print $4}'").strip()
+    if free.isdigit() and growth > int(free) * 1024 - 32768:
+        return "恢复中止：/data 剩余 %sKB，净增 %dKB 放不下" % (free, growth // 1024)
+    if not upload_file("/tmp/panel_restore.tar.gz", slim):
+        return "上传失败（字节校验不通过），未动路由器任何配置"
+    out = sh("tar xzf /tmp/panel_restore.tar.gz -C / 2>&1; echo RC=$?")
+    sh("rm -f /tmp/panel_restore.tar.gz /data/adblock.hosts /tmp/dnsmasq.d/99-adblock.conf; "
+       "chmod +x /data/auto_ssh/auto_ssh.sh 2>/dev/null; "
+       "/etc/init.d/cron restart; /etc/init.d/dnsmasq restart")
+    if "RC=0" not in out:
+        return "解压异常（已保留恢复前备份 %s）：%s" % (pre, out[:120])
+    return "恢复完成（%d 项；恢复前备份 %s）。cron 与 dnsmasq 已重启" % (len(members), pre)
+
+
 def collect():
     global collect_ms, collect_fails
     now = time.time()
@@ -749,6 +833,8 @@ def do_action(action, params=None):
         if fn:
             return "备份完成：" + fn + "（在下方备份列表可下载）"
         return "备份失败：请检查 SSH 连接后重试"
+    if action == "restore":
+        return restore_backup(params.get("name", ""))
     if action == "reboot":
         if params.get("confirm") != "yes":
             return "已取消：需确认（confirm=yes）才执行重启"
