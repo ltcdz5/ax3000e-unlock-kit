@@ -210,6 +210,7 @@ def get_config():
     cfg["adblock_enabled"] = "99-adblock.conf" in sh("ls /tmp/dnsmasq.d/ 2>/dev/null")
     custom = sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null")
     cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip() for l in custom.splitlines() if l.startswith("address=/")]
+    cfg["log_queries"] = "93-logqueries" in sh("ls /tmp/dnsmasq.d/ 2>/dev/null")
     cfg["upnp"] = "miniupnpd" in sh("ps | grep miniupnpd | grep -v grep")
     cfg["upnp_download"] = sh("uci get upnpd.config.download 2>/dev/null")
     cfg["upnp_upload"] = sh("uci get upnpd.config.upload 2>/dev/null")
@@ -322,124 +323,6 @@ def dns_latency(server, domain="www.baidu.com", tries=3):
     return round(sum(ok) / len(ok), 1) if ok else -1
 
 
-def esc(s):
-    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-def frm(action, params=None, confirm=None, fields=None, btn_txt="执行", btn_cls="btn"):
-    """原生 form 按钮：导航级提交，零 JS 依赖"""
-    p = json.dumps({"action": action, "params": params or {}}, ensure_ascii=False)
-    p = p.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
-    h = '<form method="post" action="/api/act" style="display:inline">'
-    h += '<input type="hidden" name="json" value="' + p + '">'
-    for fname, fval in (fields or {}).items():
-        h += '<input class="inp" name="' + fname + '" value="' + esc(fval) + '" style="width:auto">'
-    h += '<button class="' + btn_cls + '" type="submit"'
-    if confirm:
-        h += ' onclick="return confirm(\'' + confirm.replace("'", "&#39;") + '\')"'
-    h += '>' + btn_txt + '</button></form>'
-    return h
-
-def render_config_html(cfg):
-    h = []
-    # DNS 上游
-    ups = ""
-    for s in cfg.get("dns_upstreams", []):
-        ups += '<div class="item"><span class="val">' + esc(s) + '</span>' + frm("dns_del", {"server": s}, confirm="删除 " + s + " 吗？", btn_txt="删除", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>DNS 上游</h3><div class="tip">💡 建议：国内优先（阿里/腾讯/电信），海外备选。填 IP 即可。</div><div class="desc">当前 ' + str(len(cfg.get("dns_upstreams", []))) + ' 个上游</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;dns_add&quot;}"><input class="inp" name="server" placeholder="例: 223.5.5.5"><button class="btn" type="submit">添加</button></form>' +
-             '<div class="list">' + ups + '</div><div class="row">' + frm("dnsmasq_restart", btn_txt="重启 DNS 服务", btn_cls="btn gray") + '</div></div>')
-    # DNS 缓存
-    h.append('<div class="cfg-panel"><h3>DNS 缓存</h3><div class="tip">💡 建议：默认 150 太小，已设为 1024。512-2048 合适，别超 4096。</div><div class="desc">当前 cache-size = ' + esc(cfg.get("cache_size", "")) + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cache_set&quot;}"><input class="inp" name="size" value="' + esc(cfg.get("cache_size", "1024")) + '"><button class="btn" type="submit">保存</button></form></div>')
-    # 自定义屏蔽
-    cust = ""
-    for d in cfg.get("custom_adblock", []):
-        cust += '<div class="item"><span class="val">' + esc(d) + '</span>' + frm("ad_custom_del", {"domain": d}, confirm="解除屏蔽 " + d + " 吗？", btn_txt="解除", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>自定义屏蔽域名</h3><div class="tip">💡 建议：去广告列表没覆盖的域名，手动加这里。填域名如 ads.example.com（不含 http）。</div><div class="desc">已屏蔽 ' + str(len(cfg.get("custom_adblock", []))) + ' 个</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;ad_custom_add&quot;}"><input class="inp" name="domain" placeholder="例: ads.example.com"><button class="btn" type="submit">屏蔽</button></form>' +
-             '<div class="list">' + cust + '</div></div>')
-    # 去广告
-    ad_on = cfg.get("adblock_enabled", True)
-    h.append('<div class="cfg-panel"><h3>去广告</h3><div class="tip">💡 建议：hagezi(4.2万) + yhosts(6428) 自动更新，开机自愈。</div><div class="desc"><span class="badge ' + ('on' if ad_on else 'off') + '">' + ('已开' if ad_on else '已关') + '</span> hagezi ' + esc(cfg.get("adblock_antiad", "")) + ' 条 / yhosts ' + esc(cfg.get("adblock_yhosts", "")) + ' 条</div>' +
-             '<div class="row">' + frm("adblock_toggle", confirm="确定" + ("关闭" if ad_on else "开启") + "去广告吗？", btn_txt=("关闭" if ad_on else "开启") + "去广告") +
-             frm("antiad_update", confirm="重新下载 hagezi 列表？", btn_txt="更新列表") + '</div></div>')
-    # UPnP
-    upnp = cfg.get("upnp", True)
-    h.append('<div class="cfg-panel"><h3>UPnP</h3><div class="tip">💡 建议：保持开启，P2P/游戏语音自动映射端口。</div><div class="desc"><span class="badge ' + ('on' if upnp else 'off') + '">' + ('已开' if upnp else '已关') + '</span> 当前速率 下行 ' + esc(cfg.get("upnp_download", "")) + ' / 上行 ' + esc(cfg.get("upnp_upload", "")) + '</div>' +
-             '<div class="row">' + frm("upnp_toggle", confirm="确定" + ("关闭" if upnp else "开启") + " UPnP 吗？", btn_txt=("关闭" if upnp else "开启") + " UPnP") + '</div></div>')
-    # QoS
-    q = cfg.get("qos", "1")
-    h.append('<div class="cfg-panel"><h3>QoS</h3><div class="tip">💡 建议：拨号在 K2P，本路由 QoS 管不到下载设备，建议关闭。</div><div class="desc">当前 ' + ('已开' if q == "1" else "已关") + '（下行 ' + esc(cfg.get("qos_down", "")) + ' / 上行 ' + esc(cfg.get("qos_up", "")) + '）</div>' +
-             '<div class="row">' + frm("qos_toggle", confirm="确定" + ("关闭" if q == "1" else "开启") + " QoS 吗？", btn_txt=("关闭" if q == "1" else "开启") + " QoS") + '</div></div>')
-    # 端口转发
-    pfs = ""
-    for pf in cfg.get("port_forwards", []):
-        pfs += '<div class="item"><span class="val">' + esc(pf.get("name", "")) + ' ' + esc(pf.get("proto", "")) + ' ' + esc(pf.get("src_dport", "")) + '→' + esc(pf.get("dest_ip", "")) + ':' + esc(pf.get("dest_port", "")) + '</span>' + frm("port_del", {"id": pf.get("id", "")}, confirm="删除端口转发？", btn_txt="删", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>端口转发</h3><div class="tip">💡 建议：游戏服务器/远程访问用。外网端口 → 内网 IP:端口。</div><div class="desc">' + str(len(cfg.get("port_forwards", []))) + ' 条</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;port_add&quot;}"><input class="inp" name="name" placeholder="名称"><input class="inp" name="ext" placeholder="外网端口"><input class="inp" name="ip" placeholder="内网IP"><input class="inp" name="inner" placeholder="内网端口(可空)"><button class="btn" type="submit">添加</button></form>' +
-             '<div class="list">' + pfs + '</div></div>')
-    # DHCP 租期
-    h.append('<div class="cfg-panel"><h3>DHCP 租期</h3><div class="tip">💡 建议：默认 12h 合适。</div><div class="desc">当前 ' + esc(cfg.get("dhcp_lease", "")) + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;dhcp_lease&quot;}"><input class="inp" name="lease" value="' + esc(cfg.get("dhcp_lease", "12h")) + '"><button class="btn" type="submit">保存</button></form></div>')
-    # WiFi 信道
-    w = cfg.get("wifi", {})
-    a_ch = str(w.get("a_channel", "0"))
-    g_ch = str(w.get("g_channel", "0"))
-    asel = '<select class="inp" name="channel">'
-    for ch in [36, 40, 44, 48, 149, 153, 157, 161]:
-        asel += '<option value="' + str(ch) + '"' + (' selected' if a_ch == str(ch) else '') + '>' + str(ch) + (' (推荐)' if ch in (36, 149) else '') + '</option>'
-    asel += '</select>'
-    gsel = '<select class="inp" name="channel">'
-    for ch in [1, 6, 11, 3, 9, 13]:
-        gsel += '<option value="' + str(ch) + '"' + (' selected' if g_ch == str(ch) else '') + '>' + str(ch) + (' (推荐)' if ch in (1, 6, 11) else '') + '</option>'
-    gsel += '</select>'
-    h.append('<div class="cfg-panel"><h3>WiFi 信道</h3><div class="tip">💡 建议：信道即时切换（官方接口，不断网）。5G 推荐 36/149（避开雷达）；2.4G 推荐 1/6/11。重启后恢复自动。</div><div class="desc">5G: ' + esc(w.get("a_ssid", "")) + ' 信道' + (a_ch if a_ch != "0" else "自动") + ' · 2.4G: ' + esc(w.get("g_ssid", "")) + ' 信道' + (g_ch if g_ch != "0" else "自动") + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_channel&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;5g&quot;}}">5G ' + asel + '<button class="btn" type="submit">切换5G信道</button></form>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_channel&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;2g&quot;}}">2.4G ' + gsel + '<button class="btn" type="submit">切换2.4G信道</button></form></div>')
-    # 在线设备
-    dv = ""
-    for x in cfg.get("devices", []):
-        dv += '<div class="item"><span class="val">' + esc(x.get("host", "")) + '</span><span class="val">' + esc(x.get("ip", "")) + '</span><span class="val">' + esc(x.get("mac", "")) + '</span></div>'
-    h.append('<div class="cfg-panel"><h3>在线设备</h3><div class="tip">💡 当前 DHCP 分配的设备。</div><div class="desc">' + str(len(cfg.get("devices", []))) + ' 台</div><div class="list">' + dv + '</div></div>')
-    # 静态绑定
-    bd = ""
-    for x in cfg.get("binds", []):
-        bd += '<div class="item"><span class="val">' + esc(x.get("name", "")) + '</span><span class="val">' + esc(x.get("mac", "")) + '</span><span class="val">' + esc(x.get("ip", "")) + '</span>' + frm("device_unbind", {"id": x.get("id", "")}, confirm="解除绑定？", btn_txt="解绑", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>静态 IP 绑定</h3><div class="tip">💡 建议：把设备固定为指定 IP（端口转发前提）。填设备的 MAC 和想固定的 IP。</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;device_bind&quot;}"><input class="inp" name="mac" placeholder="MAC 如 aa:bb:cc:dd:ee:ff"><input class="inp" name="ip" placeholder="IP 如 192.168.31.50"><input class="inp" name="name" placeholder="名称(可选)"><button class="btn" type="submit">绑定</button></form>' +
-             '<div class="list">' + bd + '</div></div>')
-    # 定时任务
-    ct = ""
-    for t in cfg.get("cron_tasks", []):
-        ct += '<div class="item"><span class="val">' + esc(t) + '</span>' + frm("cron_del", {"line": t}, confirm="删除该任务？", btn_txt="删", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>定时任务</h3><div class="tip">💡 格式: 分 时 日 月 周 命令。例 "0 4 * * * reboot" = 每天4点重启路由器。真实写入 crontab，重启后仍生效。</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;cron_add&quot;}"><input class="inp" name="schedule" placeholder="如 0 4 * * *"><input class="inp" name="command" placeholder="命令 如 reboot"><button class="btn" type="submit">添加</button></form>' +
-             '<div class="list">' + ct + '</div></div>')
-    # 防火墙规则
-    fr = ""
-    for x in cfg.get("fw_rules", []):
-        col = "red" if x.get("target") in ("DROP", "REJECT") else "green"
-        fr += '<div class="item"><span class="val ' + col + '">' + esc(x.get("target", "")) + '</span><span class="val">' + esc(x.get("name", "")) + '</span><span class="val">' + esc(x.get("src", "") or "any") + ((":" + esc(x.get("dest_port", ""))) if x.get("dest_port") else "") + '/' + esc(x.get("proto", "") or "all") + '</span>' + frm("fw_rule_del", {"id": x.get("id", "")}, confirm="删除规则？", btn_txt="删", btn_cls="btn red") + '</div>'
-    h.append('<div class="cfg-panel"><h3>防火墙规则</h3><div class="tip">💡 高级：按 IP/端口/协议 允许(ACCEPT)或拒绝(DROP/REJECT)流量。</div><div class="desc">' + str(len(cfg.get("fw_rules", []))) + ' 条</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;fw_rule_add&quot;}"><input class="inp" name="name" placeholder="名称"><select class="inp" name="target"><option value="DROP">拒绝 DROP</option><option value="ACCEPT">允许 ACCEPT</option><option value="REJECT">拒绝 REJECT</option></select><input class="inp" name="src" placeholder="来源IP(空=所有)"><input class="inp" name="dest_port" placeholder="目标端口(空=所有)"><button class="btn" type="submit">添加规则</button></form>' +
-             '<div class="list">' + fr + '</div></div>')
-    # 性能优化
-    h.append('<div class="cfg-panel"><h3>性能优化</h3><div class="tip">💡 建议：DNS 上游测速排序（解析更快）、WiFi 功率即时调整。硬件 NAT 已启用。</div><div class="desc">硬件 NAT: 已启用 (NSS 加速) · 队列: fq_codel</div>' +
-             '<div class="row">' + frm("dns_speedtest", btn_txt="DNS 测速") + frm("dns_fastest", confirm="用最快的4个上游并重启DNS？", btn_txt="一键用最快", btn_cls="btn green") + '</div>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_power&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;5g&quot;}}">5G功率<select class="inp" name="power"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option></select><button class="btn" type="submit">设5G功率</button></form>' +
-             '<form method="post" action="/api/act" class="row"><input type="hidden" name="json" value="{&quot;action&quot;:&quot;wifi_power&quot;,&quot;params&quot;:{&quot;band&quot;:&quot;2g&quot;}}">2.4G功率<select class="inp" name="power"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option></select><button class="btn" type="submit">设2.4G功率</button></form></div>')
-    # LED + 备份 + Guest
-    h.append('<div class="cfg-panel"><h3>LED 指示灯</h3><div class="tip">💡 关闭指示灯（路由器灯灭，不影响功能）。</div><div class="desc">' + ('亮' if cfg.get("led_blue") else "灭") + '</div><div class="row">' + frm("led_toggle", btn_txt=("关闭" if cfg.get("led_blue") else "开启")) + '</div></div>')
-    h.append('<div class="cfg-panel"><h3>配置备份</h3><div class="tip">💡 配置存在路由器 /etc/config/。重启/升级前建议先备份。</div><div class="row">' + frm("backup", btn_txt="查看配置摘要", btn_cls="btn gray") + '</div></div>')
-    gw = cfg.get("guest_wifi", {})
-    h.append('<div class="cfg-panel"><h3>Guest 访客网络</h3><div class="tip">💡 访客 2.4G: ' + esc(gw.get("2g", "off")) + ' / 5G: ' + esc(gw.get("5g", "off")) + '。开启访客网络请用小米管理页 192.168.31.1（本面板不做 wifi 写入避免断网风险）。</div></div>')
-    # 系统操作 + 系统
-    h.append('<div class="cfg-panel"><h3>系统操作</h3><div class="tip">💡 重启路由器(2秒后执行) · 需等待约2分钟恢复</div><div class="row">' +
-             frm("reboot", {"confirm": "yes"}, confirm="确定重启路由器？约2分钟断网", btn_txt="重启路由器", btn_cls="btn red") +
-             frm("dnsmasq_restart", btn_txt="重启DNS", btn_cls="btn gray") + '</div></div>')
-    h.append('<div class="cfg-panel"><h3>系统</h3><div class="tip">💡 运行 ' + esc(cfg.get("uptime", "")) + ' · 温度 ' + esc(cfg.get("temp", "")) + '°C · WiFi: ' + esc(w.get("ssid", "")) + ' (信道' + esc(w.get("channel", "")) + ')</div></div>')
-    return '<div class="cfg-grid">' + "".join(h) + '</div>'
-
 def do_action(action, params=None):
     params = params or {}
     if action == "adblock_toggle":
@@ -465,6 +348,20 @@ def do_action(action, params=None):
     if action == "dnsmasq_restart":
         sh("/etc/init.d/dnsmasq restart")
         return "dnsmasq 已重启"
+    if action == "log_toggle":
+        was_on = sh("test -f /tmp/dnsmasq.d/93-logqueries.conf && echo y") == "y"
+        if was_on:
+            r = sh("rm -f /tmp/dnsmasq.d/93-logqueries.conf /data/logqueries.conf; /etc/init.d/dnsmasq restart; "
+                   "test -f /tmp/dnsmasq.d/93-logqueries.conf || echo DONE")
+            ok_msg = "DNS 查询日志已关闭（持久生效，重启后仍关闭；dnsmasq CPU 负担降低）"
+        else:
+            r = sh("printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /data/logqueries.conf; "
+                   "cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; /etc/init.d/dnsmasq restart; "
+                   "test -f /tmp/dnsmasq.d/93-logqueries.conf && echo DONE")
+            ok_msg = "DNS 查询日志已开启（写入 tmpfs /tmp/dnsquery.log，不耗闪存）"
+        if "DONE" not in r:
+            return "SSH 执行失败（路由器无响应或过载），状态未变更，请稍后重试"
+        return ok_msg
     if action == "upnp_toggle":
         on = "miniupnpd" in sh("ps | grep miniupnpd | grep -v grep")
         if on:
@@ -870,7 +767,7 @@ function refresh(){
  }).catch(function(){});
 }
 setInterval(refresh,2000);refresh();
-setTimeout(function(){showMsg('✅ 已连接');},300);
+setTimeout(function(){showMsg('✅ 已连接');loadCfg(0);},300);
 
 function badge(on){return '<span class="badge '+(on?'on':'off')+'">'+(on?'已开':'已关')+'</span>';}
 function tip(t){return '<div class="tip">💡 建议：'+t+'</div>';}
@@ -909,7 +806,7 @@ function renderCfgBody(d){
   h+=panel('DNS 上游','','国内优先（阿里/腾讯/电信），海外备选。填 IP 即可。',
     '当前 '+d.dns_upstreams.length+' 个上游',
     '<div class="row"><input class="inp" id="dns-add" placeholder="例: 223.5.5.5"><button class="btn" id="b-add">添加</button></div><div class="list">'+ups+'</div>',
-    '<button class="btn gray" data-act="dnsmasq_restart">重启 DNS 服务</button>');
+    '<button class="btn gray" data-act="dnsmasq_restart">重启 DNS 服务</button><button class="btn gray" data-act="log_toggle" data-confirm="'+(c.log_queries?'关闭后 dnsmasq 不再记录查询，降低 CPU 开销。确认？':'开启后将记录全部查询（写入 tmpfs）。确认？')+'">'+(c.log_queries?'关闭查询日志':'开启查询日志')+'</button>');
   // DNS 缓存
   h+=panel('DNS 缓存','','默认 150 太小，已设为 1024。越大缓存命中率越高，一般 512-2048 合适，别超 4096。',
     '当前 cache-size = '+d.cache_size,

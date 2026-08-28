@@ -687,12 +687,19 @@ def do_action(action, params=None):
         sh("/etc/init.d/dnsmasq restart")
         return "dnsmasq 已重启"
     if action == "log_toggle":
-        if sh("test -f /tmp/dnsmasq.d/93-logqueries.conf && echo y") == "y":
-            sh("rm -f /tmp/dnsmasq.d/93-logqueries.conf /data/logqueries.conf; /etc/init.d/dnsmasq restart")
-            return "DNS 查询日志已关闭（持久生效，重启后仍关闭；dnsmasq CPU 负担降低）"
-        sh("printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /data/logqueries.conf; "
-           "cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; /etc/init.d/dnsmasq restart")
-        return "DNS 查询日志已开启（写入 tmpfs /tmp/dnsquery.log，不耗闪存）"
+        was_on = sh("test -f /tmp/dnsmasq.d/93-logqueries.conf && echo y") == "y"
+        if was_on:
+            r = sh("rm -f /tmp/dnsmasq.d/93-logqueries.conf /data/logqueries.conf; /etc/init.d/dnsmasq restart; "
+                   "test -f /tmp/dnsmasq.d/93-logqueries.conf || echo DONE")
+            ok_msg = "DNS 查询日志已关闭（持久生效，重启后仍关闭；dnsmasq CPU 负担降低）"
+        else:
+            r = sh("printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /data/logqueries.conf; "
+                   "cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; /etc/init.d/dnsmasq restart; "
+                   "test -f /tmp/dnsmasq.d/93-logqueries.conf && echo DONE")
+            ok_msg = "DNS 查询日志已开启（写入 tmpfs /tmp/dnsquery.log，不耗闪存）"
+        if "DONE" not in r:
+            return "SSH 执行失败（路由器无响应或过载），状态未变更，请稍后重试"
+        return ok_msg
     if action == "cache_set":
         v = str(params.get("size", "")).strip()
         if not v.isdigit() or not (64 <= int(v) <= 100000):
