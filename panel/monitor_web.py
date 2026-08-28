@@ -1,5 +1,18 @@
 # -*- coding: utf-8 -*-
-"""面板 HTTP 服务层：静态页 + JSON API + 认证。不含业务逻辑（见 router_monitor_ap.py）。"""
+"""面板 HTTP 服务层（v3.0 起为双面板共享）：统一认证/校验/路由，业务逻辑经 ctx 注入。
+
+ctx 契约：
+  webport  监听端口
+  lan      True=绑定全网卡（必须配 token）；False=仅 127.0.0.1
+  token    HTTP Basic 令牌（密码，用户名任意）；空=免认证
+  page     bytes 或 callable()->bytes          GET /
+  api      callable() -> obj                   GET /api
+  get_config / do_action                      GET /api/config · POST /api/act
+  net_test / dns_queries / dns_stats / read_backup（可选，缺省路由返回 404）
+
+纯函数 host_ok / origin_ok / auth_ok / escape_inline_json / parse_act_body
+单独导出，供单元测试与两个面板复用。
+"""
 import os
 import json
 import hmac
@@ -16,48 +29,93 @@ def load_page():
         return f.read().encode("utf-8")
 
 
+# ---------- 纯函数（可单测） ----------
+
+def host_ok(lan, host_header):
+    """防 DNS rebinding：本机模式下 Host 必须是回环地址（--lan 时不限制）。"""
+    if lan:
+        return True
+    h = (host_header or "").split(":")[0].strip("[]").lower()
+    return h in ("127.0.0.1", "localhost", "::1")
+
+
+def origin_ok(lan, origin_header, host_header):
+    """防 CSRF：浏览器跨站 POST 必带 Origin/Referer 且与 Host 同源；
+    无 Origin/Referer 视为非浏览器直连（本地 CLI），仅本机模式放行。"""
+    origin = (origin_header or "").strip()
+    if not origin:
+        return not lan
+    try:
+        net = urllib.parse.urlparse(origin).netloc.lower()
+    except Exception:
+        return False
+    return net == (host_header or "").lower()
+
+
+def auth_ok(token, authorization_header):
+    """HTTP Basic：密码即令牌（用户名忽略），常时比较。token 为空=免认证。"""
+    tok = token or ""
+    if not tok:
+        return True
+    hdr = authorization_header or ""
+    if not hdr.startswith("Basic "):
+        return False
+    try:
+        raw = base64.b64decode(hdr[6:]).decode("utf-8", "replace")
+        _, _, pw = raw.partition(":")
+    except Exception:
+        return False
+    return hmac.compare_digest(pw, tok)
+
+
+def escape_inline_json(s):
+    """内联进 <script> 的 JSON 先逃逸：防 </script> 截断注入与 JS 行分隔符。"""
+    for a, b in (("<", "\\u003c"), (">", "\\u003e"),
+                 (chr(0x2028), "\\u2028"), (chr(0x2029), "\\u2029")):
+        s = s.replace(a, b)
+    return s
+
+
+def parse_act_body(raw):
+    """POST /api/act 请求体：JSON 或表单（json= 字段，其余字段并入 params）。"""
+    raw = raw or ""
+    if raw.lstrip().startswith("{"):
+        data = json.loads(raw)
+        return data.get("action", ""), dict(data.get("params") or {})
+    qs = urllib.parse.parse_qs(raw)
+    data = json.loads(qs.get("json", ["{}"])[0])
+    params = dict(data.get("params") or {})
+    for k, v in qs.items():
+        if k != "json":
+            params[k] = v[0]
+    return data.get("action", ""), params
+
+
+# ---------- Handler ----------
+
 class Handler(BaseHTTPRequestHandler):
     ctx = None
 
-    def _auth_ok(self):
-        tok = self.ctx.get("token") or ""
-        if not tok:
-            return True
-        hdr = self.headers.get("Authorization", "")
-        if hdr.startswith("Basic "):
-            try:
-                raw = base64.b64decode(hdr[6:]).decode("utf-8", "replace")
-                _, _, pw = raw.partition(":")
-            except Exception:
-                return False
-            return hmac.compare_digest(pw, tok)
-        return False
+    def _gate(self, post=False):
+        c = self.ctx
+        if not host_ok(c.get("lan"), self.headers.get("Host")):
+            self._send(403, {"ok": False, "error": "illegal host"})
+            return False
+        if post and not origin_ok(c.get("lan"),
+                                  self.headers.get("Origin") or self.headers.get("Referer"),
+                                  self.headers.get("Host")):
+            self._send(403, {"ok": False, "error": "origin check failed"})
+            return False
+        if not auth_ok(c.get("token"), self.headers.get("Authorization")):
+            self._deny()
+            return False
+        return True
 
     def _deny(self):
         self.send_response(401)
         self.send_header("WWW-Authenticate", 'Basic realm="router-panel"')
         self.send_header("Content-Length", "0")
         self.end_headers()
-
-    def _host_ok(self):
-        # 防 DNS rebinding：本地模式下 Host 必须是回环地址
-        if self.ctx.get("lan"):
-            return True
-        h = (self.headers.get("Host") or "").split(":")[0].strip("[]").lower()
-        return h in ("127.0.0.1", "localhost", "::1")
-
-    def _origin_ok(self):
-        # 防 CSRF：浏览器发起的 POST（含跨站 form 简单请求）必带 Origin/Referer，
-        # 其 host 必须与本次请求 Host 一致；同源 fetch 天然满足。
-        # 无 Origin/Referer 的 POST 视为非浏览器直连（本地 CLI），仅 localhost 模式下允许。
-        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
-        if not origin:
-            return not self.ctx.get("lan")
-        try:
-            net = urllib.parse.urlparse(origin).netloc.lower()
-        except Exception:
-            return False
-        return net == (self.headers.get("Host") or "").lower()
 
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -79,63 +137,65 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
-        if not self._host_ok():
-            return self._send(403, {"ok": False, "error": "illegal host"})
-        if not self._auth_ok():
-            return self._deny()
+        if not self._gate():
+            return
         p = self.path.split("?")[0]
         c = self.ctx
-        if p == "/":
-            self._send_bytes(200, c["page"], "text/html; charset=utf-8")
-        elif p == "/api":
+        page = c.get("page")
+        if p == "/" and page is not None:
+            data = page() if callable(page) else page
+            self._send_bytes(200, data, "text/html; charset=utf-8")
+        elif p == "/api" and c.get("api"):
             self._send(200, c["api"]())
-        elif p == "/api/dnsquery":
+        elif p == "/api/config" and c.get("get_config"):
+            try:
+                self._send(200, c["get_config"]())
+            except Exception as e:
+                self._send(500, {"ok": False, "error": str(e)})
+        elif p == "/api/dnsquery" and c.get("dns_queries"):
             self._send(200, {"queries": c["dns_queries"]()})
-        elif p == "/api/dnshitrate":
+        elif p == "/api/dnshitrate" and c.get("dns_stats"):
             stats = c["dns_stats"]()
-            if stats:
-                self._send(200, stats)
-            else:
-                self._send(200, {"ok": False, "error": "未读到 dnsmasq 统计"})
-        elif p.startswith("/download/"):
+            self._send(200, stats if stats else {"ok": False, "error": "未读到 dnsmasq 统计"})
+        elif p.startswith("/download/") and c.get("read_backup"):
             name = urllib.parse.unquote(p[len("/download/"):])
             blob = c["read_backup"](name)
             if blob is None:
                 self._send(404, {"ok": False, "error": "备份文件不存在"})
             else:
-                safe = os.path.basename(name)
                 self._send_bytes(200, blob, "application/gzip",
-                                 'attachment; filename="%s"' % safe)
-        elif p == "/api/config":
-            try:
-                self._send(200, c["get_config"]())
-            except Exception as e:
-                self._send(500, {"ok": False, "error": str(e)})
+                                 'attachment; filename="%s"' % os.path.basename(name))
         else:
             self._send(404, {"ok": False})
 
     def do_POST(self):
-        if not self._host_ok():
-            return self._send(403, {"ok": False, "error": "illegal host"})
-        if not self._origin_ok():
-            return self._send(403, {"ok": False, "error": "origin check failed"})
-        if not self._auth_ok():
-            return self._deny()
+        if not self._gate(post=True):
+            return
         p = self.path.split("?")[0]
         c = self.ctx
-        if p == "/api/nettest":
-            try:
-                self._send(200, {"ok": True, "msg": c["net_test"]()})
-            except Exception as e:
-                self._send(200, {"ok": False, "msg": str(e)})
-        elif p == "/api/act":
+        if p == "/api/act" and c.get("do_action"):
             try:
                 ln = int(self.headers.get("Content-Length", 0))
-                data = json.loads(self.rfile.read(ln).decode("utf-8", "replace") or "{}")
-                msg = c["do_action"](data.get("action", ""), data.get("params") or {})
-                self._send(200, {"ok": True, "msg": msg})
+                raw = self.rfile.read(ln).decode("utf-8", "replace")
+                action, params = parse_act_body(raw)
+                msg = c["do_action"](action, params)
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e)})
+                return
+            if (self.headers.get("Content-Type") or "").startswith("application/json"):
+                self._send(200, {"ok": True, "msg": msg})
+            else:
+                # 表单提交（浏览器按钮）：302 回首页经 ?msg= 展示
+                self.send_response(302)
+                self.send_header("Location", "/?msg=" + urllib.parse.quote(str(msg)))
+                self.end_headers()
+        elif p == "/api/nettest" and c.get("do_action"):
+            try:
+                fn = c.get("net_test")
+                msg = fn() if fn else c["do_action"]("net_test", {})
+                self._send(200, {"ok": True, "msg": msg})
+            except Exception as e:
+                self._send(200, {"ok": False, "msg": str(e)})
         else:
             self._send(404, {"ok": False})
 
@@ -145,7 +205,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(ctx):
     ctx = dict(ctx)
-    ctx["page"] = load_page()
+    if "page" not in ctx:
+        ctx["page"] = load_page()
     Handler.ctx = ctx
     port = ctx["webport"]
     if ctx.get("lan"):
@@ -159,13 +220,13 @@ def serve(ctx):
                     pass
                 super().server_bind()
         srv = Srv(("::", port), Handler)
-        where = "0.0.0.0(双栈)/%d" % port
+        where = "0.0.0.0(双栈)/%d · HTTP Basic 已启用" % port
     else:
         class Srv4(ThreadingHTTPServer):
             daemon_threads = True
         srv = Srv4(("127.0.0.1", port), Handler)
         where = "127.0.0.1:%d (仅本机)" % port
-    print("  面板地址: http://127.0.0.1:%d  监听: %s%s" % (port, where, "  · 已启用令牌认证" if ctx.get("token") else ""))
+    print("  面板地址: http://127.0.0.1:%d  监听: %s" % (port, where))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

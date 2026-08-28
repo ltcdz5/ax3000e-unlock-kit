@@ -5,10 +5,11 @@ AX3000E 监控 + 配置中心 v5.1（中文版）
 - 配置中心: 全中文 + 每项带建议设置说明，事件委托实现
 用法: python router_monitor.py
 """
-import sys, os, json, time, threading, argparse, re, base64, hmac
+import sys, os, json, time, threading, argparse, re
 import urllib.parse
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from collections import deque
+
+import monitor_web
 
 HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
 SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
@@ -1007,187 +1008,63 @@ function post(body){
 """
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, code, obj):
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+# ---------- 服务层（v3.0 起与 AP 面板共享 monitor_web，认证/校验单一来源） ----------
 
-    def do_GET(self):
-        if not self._gate():
-            return
-        p = self.path.split("?")[0]
-        if p == "/api":
-            with data_lock:
-                d = {"cpu": list(history["cpu"]), "mem_used_mb": list(history["mem_used_mb"]),
-                     "mem_total_mb": list(history["mem_total_mb"]), "temp": list(history["temp"]),
-                     "rx": list(history["rx"]), "tx": list(history["tx"]), "conn": list(history["conn"]),
-                     "latest": {"cpu": history["cpu"][-1] if history["cpu"] else 0,
-                                "mem_used_mb": history["mem_used_mb"][-1] if history["mem_used_mb"] else 0,
-                                "mem_total_mb": history["mem_total_mb"][-1] if history["mem_total_mb"] else 0,
-                                "temp": history["temp"][-1] if history["temp"] else 0,
-                                "rx": history["rx"][-1] if history["rx"] else 0,
-                                "tx": history["tx"][-1] if history["tx"] else 0,
-                                "conn": history["conn"][-1] if history["conn"] else 0}}
-            self._send(200, d)
-        elif p == "/api/config":
-            try:
-                self._send(200, get_config())
-            except Exception as e:
-                self._send(500, {"ok": False, "error": str(e)})
-        else:
-            try:
-                cfg_data = get_config()
-                cfg_html = render_config_html(cfg_data)
-                cfg_json = json.dumps(cfg_data, ensure_ascii=False)
-            except Exception as e:
-                cfg_html = '<div class="cfg-grid"><div class="cfg-panel"><h3>错误</h3><div class="desc">' + esc(str(e)) + '</div></div></div>'
-                cfg_json = "{}"
-            body = PAGE.replace("%HOST%", HOST).replace('<div class="cfg-grid" id="cfg-grid">加载中...</div>', cfg_html).encode("utf-8")
-            # 防 </script> 截断注入（DHCP 主机名等不可信字段直接进内联 JSON）+ JS 行分隔符
-            for a, b in (("<", "\\u003c"), (">", "\\u003e"),
-                         (chr(0x2028), "\\u2028"), (chr(0x2029), "\\u2029")):
-                cfg_json = cfg_json.replace(a, b)
-            body = body.replace(b"<script>", ("<script>window.__CFG__=" + cfg_json + ";").encode("utf-8"), 1)
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-    def _gate(self):
-        # 防 DNS rebinding：本地模式 Host 必须是回环地址（--lan 时不限制）
-        if not LAN_MODE:
-            h = (self.headers.get("Host") or "").split(":")[0].strip("[]").lower()
-            if h not in ("127.0.0.1", "localhost", "::1"):
-                self._send(403, {"ok": False, "error": "illegal host"})
-                return False
-        # 防 CSRF：浏览器跨站 POST 必带 Origin/Referer 且与 Host 一致；无 Origin 的 CLI 直连放行
-        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
-        if origin:
-            try:
-                net = urllib.parse.urlparse(origin).netloc.lower()
-            except Exception:
-                net = "?"
-            if net != (self.headers.get("Host") or "").lower():
-                self._send(403, {"ok": False, "error": "origin check failed"})
-                return False
-        # 令牌：--lan 模式必配；HTTP Basic（浏览器原生弹框，凭证自动附带所有后续请求）
-        if PANEL_TOKEN and not self._auth_ok():
-            self._deny()
-            return False
-        return True
-
-    def _auth_ok(self):
-        # 与 AP 面板 monitor_web.py 同款：Basic 密码即令牌，用户名忽略
-        hdr = self.headers.get("Authorization", "")
-        if not hdr.startswith("Basic "):
-            return False
-        try:
-            raw = base64.b64decode(hdr[6:]).decode("utf-8", "replace")
-            _, _, pw = raw.partition(":")
-        except Exception:
-            return False
-        return hmac.compare_digest(pw, PANEL_TOKEN)
-
-    def _deny(self):
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="router-panel"')
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def do_POST(self):
-        if not self._gate():
-            return
-        if self.path == "/api/act":
-            try:
-                ln = int(self.headers.get("Content-Length", 0))
-                raw = self.rfile.read(ln).decode("utf-8", "replace")
-                data = {}
-                params = {}
-                if raw.startswith("{"):
-                    data = json.loads(raw or "{}")
-                    params = data.get("params", {})
-                else:
-                    from urllib.parse import parse_qs
-                    qs = parse_qs(raw)
-                    data = json.loads(qs.get("json", ["{}"])[0])
-                    params = dict(data.get("params", {}))
-                    for k, v in qs.items():
-                        if k != "json":
-                            params[k] = v[0]
-                msg = do_action(data.get("action", ""), params)
-                self.send_response(302)
-                self.send_header("Location", "/?msg=" + urllib.parse.quote(msg))
-                self.end_headers()
-            except Exception as e:
-                self.send_response(302)
-                self.send_header("Location", "/?msg=" + urllib.parse.quote("操作出错: " + str(e)))
-                self.end_headers()
-        elif self.path == "/api/config":
-            try:
-                ln = int(self.headers.get("Content-Length", 0))
-                data = json.loads(self.rfile.read(ln).decode() or "{}")
-                msg = do_action(data.get("action", ""), data.get("params", {}))
-                self._send(200, {"ok": True, "msg": msg})
-            except Exception as e:
-                self._send(500, {"ok": False, "msg": str(e)})
-        else:
-            self._send(404, {"ok": False})
-
-    def log_message(self, *a):
-        pass
+def api_snapshot():
+    with data_lock:
+        return {"cpu": list(history["cpu"]), "mem_used_mb": list(history["mem_used_mb"]),
+                "mem_total_mb": list(history["mem_total_mb"]), "temp": list(history["temp"]),
+                "rx": list(history["rx"]), "tx": list(history["tx"]), "conn": list(history["conn"]),
+                "latest": {"cpu": history["cpu"][-1] if history["cpu"] else 0,
+                           "mem_used_mb": history["mem_used_mb"][-1] if history["mem_used_mb"] else 0,
+                           "mem_total_mb": history["mem_total_mb"][-1] if history["mem_total_mb"] else 0,
+                           "temp": history["temp"][-1] if history["temp"] else 0,
+                           "rx": history["rx"][-1] if history["rx"] else 0,
+                           "tx": history["tx"][-1] if history["tx"] else 0,
+                           "conn": history["conn"][-1] if history["conn"] else 0}}
 
 
-LAN_MODE = False
-PANEL_TOKEN = ""
+def _page():
+    """每请求渲染主页：拉配置 → 注入 HTML 与内联 JSON（尖括号逃逸防截断）。"""
+    try:
+        cfg = get_config()
+        cfg_html = render_config_html(cfg)
+        cfg_json = monitor_web.escape_inline_json(json.dumps(cfg, ensure_ascii=False))
+    except Exception as e:
+        cfg_html = ('<div class="cfg-grid"><div class="cfg-panel"><h3>错误</h3>'
+                    '<div class="desc">' + esc(str(e)) + '</div></div></div>')
+        cfg_json = "{}"
+    body = PAGE.replace("%HOST%", HOST).replace(
+        '<div class="cfg-grid" id="cfg-grid">加载中...</div>', cfg_html)
+    body = body.replace("<script>", "<script>window.__CFG__=" + cfg_json + ";", 1)
+    return body.encode("utf-8")
+
 
 def main():
-    global HOST, SSHPORT, USER, PASSWD, WEBPORT, LAN_MODE, PANEL_TOKEN
-    ap = argparse.ArgumentParser()
+    global HOST, SSHPORT, USER, PASSWD, WEBPORT
+    ap = argparse.ArgumentParser(description="小米路由器 主路由模式 监控+配置中心")
     ap.add_argument("--host", default=HOST)
     ap.add_argument("--port", type=int, default=SSHPORT)
     ap.add_argument("--user", default=USER)
     ap.add_argument("--passwd", default=PASSWD)
     ap.add_argument("--web", type=int, default=WEBPORT)
-    ap.add_argument("--lan", action="store_true", help="绑定所有网卡允许局域网访问（必须同时提供 --token）")
-    ap.add_argument("--token", default=os.environ.get("ROUTER_PANEL_TOKEN", ""), help="访问令牌；--lan 时必填")
+    ap.add_argument("--lan", action="store_true",
+                    help="绑定所有网卡允许局域网访问（必须同时提供 --token）")
+    ap.add_argument("--token", default=os.environ.get("ROUTER_PANEL_TOKEN", ""),
+                    help="面板访问令牌（HTTP Basic，用户名任意、密码为令牌）")
     a = ap.parse_args()
     HOST, SSHPORT, USER, PASSWD, WEBPORT = a.host, a.port, a.user, a.passwd, a.web
     if a.lan and not a.token:
-        print("[!] --lan 会把面板暴露到局域网，必须同时设置 --token（或环境变量 ROUTER_PANEL_TOKEN）")
+        print("[!] --lan 会暴露到局域网，必须设置 --token（或环境变量 ROUTER_PANEL_TOKEN）")
         return
-    LAN_MODE, PANEL_TOKEN = a.lan, a.token
 
     threading.Thread(target=collector_loop, daemon=True).start()
     time.sleep(2)
-    import socket as _sock
-    if LAN_MODE:
-        class DualStackServer(ThreadingHTTPServer):
-            address_family = _sock.AF_INET6
-            def server_bind(self):
-                try:
-                    self.socket.setsockopt(_sock.IPPROTO_IPV6, _sock.IPV6_V6ONLY, 0)
-                except OSError:
-                    pass
-                super().server_bind()
-        srv = DualStackServer(("::", WEBPORT), Handler)
-        where = "0.0.0.0(双栈)/%d · 令牌认证已启用" % WEBPORT
-    else:
-        srv = ThreadingHTTPServer(("127.0.0.1", WEBPORT), Handler)
-        where = "127.0.0.1:%d (仅本机)" % WEBPORT
     print("AX3000E 主路由版监控+配置中心(中文): http://127.0.0.1:" + str(WEBPORT))
-    print("  监听: " + where)
     print("  路由器: " + USER + "@" + HOST + ":" + str(SSHPORT) + "  (Ctrl+C 停止)")
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        print("\n已停止")
+    monitor_web.serve({"webport": WEBPORT, "lan": a.lan, "token": a.token,
+                       "page": _page, "api": api_snapshot,
+                       "get_config": get_config, "do_action": do_action})
 
 
 if __name__ == "__main__":
