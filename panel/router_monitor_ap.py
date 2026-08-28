@@ -153,7 +153,7 @@ def make_backup():
 
 
 def list_backups():
-    """本地 backups/ 目录里的历史备份(最新在前, 最多8条)"""
+    """本地 backups/ 目录里的历史备份(最新在前, 只保留最近 3 份, 更旧的自动删除)"""
     if not os.path.isdir(BACKUP_DIR):
         return []
     items = []
@@ -165,7 +165,12 @@ def list_backups():
             except OSError:
                 pass
     items.sort(key=lambda x: x["mtime"], reverse=True)
-    return items[:8]
+    for old in items[3:]:
+        try:
+            os.remove(os.path.join(BACKUP_DIR, old["name"]))
+        except OSError:
+            pass
+    return items[:3]
 
 
 # 恢复白名单：只解这些路径，其它一律不动（yhosts 遗迹/临时垃圾不入内）
