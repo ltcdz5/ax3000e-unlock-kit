@@ -923,15 +923,8 @@ def api_snapshot():
 
 
 def _page():
-    """每请求渲染主页：读模板 + 注入内联 JSON（尖括号逃逸防截断）。配置由前端 fetch 渲染。"""
-    try:
-        cfg = get_config()
-        cfg_json = monitor_web.escape_inline_json(json.dumps(cfg, ensure_ascii=False))
-    except Exception:
-        cfg_json = "{}"
-    body = PAGE.replace("%HOST%", HOST)
-    body = body.replace("<script>", "<script>window.__CFG__=" + cfg_json + ";", 1)
-    return body.encode("utf-8")
+    """每请求渲染主页：读模板（%HOST% 占位），服务端零 SSH。配置由前端 loadCfg() 经 /api/config 拉取。"""
+    return PAGE.replace("%HOST%", HOST).encode("utf-8")
 
 
 def main():
