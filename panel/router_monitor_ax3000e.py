@@ -485,9 +485,15 @@ def do_action(action, params=None):
             sh("uci set miqos.settings.enabled='1'; uci commit miqos")
             return "QoS 已开启"
     if action == "qos_band":
-        d, u = params.get("download", "0"), params.get("upload", "0")
-        sh("uci set miqos.settings.download='" + str(d) + "'; uci set miqos.settings.upload='" + str(u) + "'; uci commit miqos")
-        return "QoS 带宽已设置: 下行 " + str(d) + ", 上行 " + str(u)
+        try:
+            d, u = int(params.get("download", 0)), int(params.get("upload", 0))
+        except (TypeError, ValueError):
+            return "带宽须为数字"
+        if not (0 <= d <= 1000000 and 0 <= u <= 1000000):
+            return "带宽范围 0-1000000"
+        d, u = str(d), str(u)
+        sh("uci set miqos.settings.download='" + d + "'; uci set miqos.settings.upload='" + u + "'; uci commit miqos")
+        return "QoS 带宽已设置: 下行 " + d + ", 上行 " + u
     if action == "cache_set":
         v = str(params.get("size", "")).strip()
         if not v.isdigit() or not (64 <= int(v) <= 100000):
@@ -520,7 +526,8 @@ def do_action(action, params=None):
         d = params.get("domain", "").strip().lower()
         if not re.match(r"^[a-z0-9\-\.]+$", d):
             return "无效域名"
-        sh("echo 'address=/" + d + "/0.0.0.0' >> /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
+        sh("echo 'address=/" + d + "/0.0.0.0' >> /tmp/dnsmasq.d/97-custom.conf; "
+           "cp /tmp/dnsmasq.d/97-custom.conf /data/custom.conf; /etc/init.d/dnsmasq restart")
         return "已屏蔽 " + d
     if action == "ad_custom_del":
         d = params.get("domain", "").strip().lower()
@@ -533,17 +540,29 @@ def do_action(action, params=None):
             return "未找到屏蔽记录 " + d
         if not sh_write("cat > " + path, ("\n".join(keep) + "\n") if keep else ""):
             return "写入失败"
-        sh("/etc/init.d/dnsmasq restart")
+        sh("cp " + path + " /data/custom.conf; /etc/init.d/dnsmasq restart")
         return "已解除屏蔽 " + d
     if action == "dhcp_lease":
-        v = params.get("lease", "12h")
-        sh("uci set dhcp.lan.leasetime='" + str(v) + "'; uci commit dhcp; /etc/init.d/dnsmasq restart")
-        return "DHCP 租期已设为 " + str(v)
+        v = str(params.get("lease", "12h")).strip()
+        if not re.match(r"^\d{1,4}h$", v):
+            return "租期格式须为 数字+h（如 12h）"
+        sh("uci set dhcp.lan.leasetime='" + v + "'; uci commit dhcp; /etc/init.d/dnsmasq restart")
+        return "DHCP 租期已设为 " + v
     if action == "port_add":
-        name = params.get("name", ""); ext = str(params.get("ext", ""))
-        ip = params.get("ip", ""); inner = str(params.get("inner", ext)); proto = params.get("proto", "tcp")
-        if not (ext.isdigit() and ip):
-            return "参数无效"
+        name = str(params.get("name", "")).strip(); ext = str(params.get("ext", "")).strip()
+        ip = str(params.get("ip", "")).strip(); inner = str(params.get("inner", ext)).strip()
+        proto = str(params.get("proto", "tcp")).strip().lower()
+        if not re.match(r"^[\w\- \u4e00-\u9fa5]{0,32}$", name):
+            return "名称含非法字符（限 32 位内字母/数字/中文/连字符/空格）"
+        if not (ext.isdigit() and 1 <= int(ext) <= 65535):
+            return "外网端口须为 1-65535"
+        if not (re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$", ip)
+                and all(int(o) <= 255 for o in ip.split("."))):
+            return "内网 IP 无效"
+        if inner != ext and not (inner.isdigit() and 1 <= int(inner) <= 65535):
+            return "内网端口须为 1-65535"
+        if proto not in ("tcp", "udp", "tcpudp"):
+            return "协议无效"
         for c in ["uci add firewall redirect",
                   "uci set firewall.@redirect[-1].name='" + name + "'",
                   "uci set firewall.@redirect[-1].src='wan'",
@@ -563,15 +582,19 @@ def do_action(action, params=None):
             return "端口转发已删除 #" + idx
         return "无效 ID"
     if action == "wifi_channel":
-        band = params.get("band", "5g")
+        band = str(params.get("band", "5g")).strip().lower()
         ch = str(params.get("channel", "0")).strip()
+        if band not in ("2g", "5g"):
+            return "band 无效"
         ifname = "wl1" if band == "2g" else "wl0"
         if not ch.isdigit():
             return "信道须为数字"
         if ch == "0":
             return "请选择具体信道（自动模式重启后恢复）"
-        if not (1 <= int(ch) <= 177):
-            return "信道范围 1-177"
+        if band == "2g" and not (1 <= int(ch) <= 13):
+            return "2.4G 信道范围 1-13"
+        if band == "5g" and not (32 <= int(ch) <= 177):
+            return "5G 信道范围 32-177"
         # 实际函数名是 _set_channel, 直接调 iwconfig 更可靠
         sh("iwconfig " + ifname + " channel " + ch)
         return "WiFi " + band + " 信道已即时切换为 " + ch + "（重启后恢复自动，如需持久请在小米管理页设置）"
@@ -588,9 +611,14 @@ def do_action(action, params=None):
     if action == "device_bind":
         mac = params.get("mac", "").strip().lower()
         ip = params.get("ip", "").strip()
-        name = params.get("name", "").strip()
-        if not (mac and ip):
-            return "MAC 和 IP 必填"
+        name = str(params.get("name", "")).strip()
+        if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", mac):
+            return "MAC 格式须为 aa:bb:cc:dd:ee:ff"
+        if not (re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$", ip)
+                and all(int(o) <= 255 for o in ip.split("."))):
+            return "IP 无效"
+        if name and not re.match(r"^[\w\- \u4e00-\u9fa5]{1,32}$", name):
+            return "名称含非法字符（限 32 位内字母/数字/中文/连字符/空格）"
         cmds = ["uci add dhcp host",
                 "uci set dhcp.@host[-1].mac='" + mac + "'",
                 "uci set dhcp.@host[-1].ip='" + ip + "'",
@@ -667,13 +695,22 @@ def do_action(action, params=None):
         sh("iwconfig " + ifname + " txpower " + pw + "dBm")
         return "WiFi " + band + " 功率已设为 " + pw + " dBm（即时生效，重启恢复）"
     if action == "fw_rule_add":
-        name = params.get("name", "").strip() or "rule"
-        target = params.get("target", "DROP").strip().upper()
-        src = params.get("src", "").strip()
-        dport = params.get("dest_port", "").strip()
-        proto = params.get("proto", "").strip()
+        name = str(params.get("name", "")).strip() or "rule"
+        target = str(params.get("target", "DROP")).strip().upper()
+        src = str(params.get("src", "")).strip()
+        dport = str(params.get("dest_port", "")).strip()
+        proto = str(params.get("proto", "")).strip().lower()
         if target not in ("ACCEPT", "DROP", "REJECT"):
             return "动作必须是 ACCEPT/DROP/REJECT"
+        if not re.match(r"^[\w\- \u4e00-\u9fa5]{1,32}$", name):
+            return "规则名含非法字符（限 32 位内字母/数字/中文/连字符/空格）"
+        if src and not (re.match(r"^(\d{1,3}\.){3}\d{1,3}$", src)
+                        and all(int(o) <= 255 for o in src.split("."))):
+            return "来源 IP 无效"
+        if dport and not re.match(r"^\d{1,5}(-\d{1,5})?$", dport):
+            return "端口须为数字或范围（如 100-200）"
+        if proto and proto not in ("tcp", "udp", "tcp udp"):
+            return "协议无效"
         cmds = ["uci add firewall rule",
                 "uci set firewall.@rule[-1].name='" + name + "'",
                 "uci set firewall.@rule[-1].target='" + target + "'"]
@@ -863,11 +900,12 @@ document.addEventListener('click',function(e){
  };
  if(b.dataset.confirm){if(confirm(b.dataset.confirm)){if(b.dataset.confirmValue)params.confirm=b.dataset.confirmValue;doIt();}}else doIt();
 });
+function E(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function renderCfgBody(d){
  var g=document.getElementById('cfg-grid'),h='';
  if(d.ok===false){g.textContent='服务器错误: '+d.error;return;}
   // DNS 上游
-  var ups='';d.dns_upstreams.forEach(function(s){ups+='<div class="item"><span class="val">'+s+'</span>'+btn('删除','red',{act:'dns_del',server:s},'删除 '+s+' 吗？')+'</div>';});
+  var ups='';d.dns_upstreams.forEach(function(s){ups+='<div class="item"><span class="val">'+E(s)+'</span>'+btn('删除','red',{act:'dns_del',server:s},'删除 '+E(s)+' 吗？')+'</div>';});
   h+=panel('DNS 上游','','国内优先（阿里/腾讯/电信），海外备选。填 IP 即可。',
     '当前 '+d.dns_upstreams.length+' 个上游',
     '<div class="row"><input class="inp" id="dns-add" placeholder="例: 223.5.5.5"><button class="btn" id="b-add">添加</button></div><div class="list">'+ups+'</div>',
@@ -877,7 +915,7 @@ function renderCfgBody(d){
     '当前 cache-size = '+d.cache_size,
     '<div class="row"><input class="inp" id="cache-inp" value="'+d.cache_size+'">'+btn('保存','',{act:'cache_set',inp:'cache-inp'})+'</div>','');
   // 自定义屏蔽
-  var cust='';d.custom_adblock.forEach(function(x){cust+='<div class="item"><span class="val">'+x+'</span>'+btn('解除','red',{act:'ad_custom_del',domain:x},'解除屏蔽 '+x+' 吗？')+'</div>';});
+  var cust='';d.custom_adblock.forEach(function(x){cust+='<div class="item"><span class="val">'+E(x)+'</span>'+btn('解除','red',{act:'ad_custom_del',domain:x},'解除屏蔽 '+E(x)+' 吗？')+'</div>';});
   h+=panel('自定义屏蔽域名','','去广告列表没覆盖的域名，手动加这里。填域名如 ads.example.com（不含 http）。',
     '已屏蔽 '+d.custom_adblock.length+' 个',
     '<div class="row"><input class="inp wide" id="cust-inp" placeholder="例: ads.example.com">'+btn('屏蔽','',{act:'ad_custom_add',inp:'cust-inp'})+'</div><div class="list">'+cust+'</div>','');
@@ -898,7 +936,7 @@ function renderCfgBody(d){
     '<div class="row"><input class="inp" id="q-dl" value="'+d.qos_down+'"> <input class="inp" id="q-ul" value="'+d.qos_up+'">'+btn('设置','',{act:'qos_band',inp2:'q-dl',inp3:'q-ul'})+'</div>',
     '<button class="btn" data-act="qos_toggle" data-confirm="确定'+(q?'关闭':'开启')+' QoS 吗？">'+(q?'关闭':'开启')+'</button>');
   // 端口转发
-  var pf='';d.port_forwards.forEach(function(x){pf+='<div class="item"><span class="val">'+x.name+'</span><span class="val">'+x.src_dport+'→'+x.dest_ip+':'+x.dest_port+' ('+x.proto+')</span>'+btn('删除','red',{act:'port_del',id:x.id},'删除该规则吗？')+'</div>';});
+  var pf='';d.port_forwards.forEach(function(x){pf+='<div class="item"><span class="val">'+E(x.name)+'</span><span class="val">'+E(x.src_dport)+'→'+E(x.dest_ip)+':'+E(x.dest_port)+' ('+E(x.proto)+')</span>'+btn('删除','red',{act:'port_del',id:x.id},'删除该规则吗？')+'</div>';});
   h+=panel('端口转发',d.port_forwards.length+' 条','外网访问内网设备用。例：CS2 服务器 UDP 27015 → 电脑内网IP:27015。',
     '外部端口 → 内网IP:内端口',
     '<div class="row"><input class="inp" id="pf-name" placeholder="名称"><input class="inp" id="pf-ext" placeholder="外端口"><input class="inp" id="pf-ip" placeholder="内网IP"><input class="inp" id="pf-int" placeholder="内端口"><select class="inp" id="pf-proto"><option>tcp</option><option>udp</option><option>tcpudp</option></select>'+btn('添加','',{act:'port_add',inp:'pf-name',inp2:'pf-ext',inp3:'pf-ip',inp4:'pf-int',inp5:'pf-proto'})+'</div><div class="list">'+pf+'</div>','');
@@ -917,19 +955,19 @@ function renderCfgBody(d){
   for(var gi=0;gi<gchans.length;gi++){var gt=(gi<3)?' (推荐)':'';gsel+='<option value="'+gchans[gi]+'"'+(d.wifi.g_channel===String(gchans[gi])?' selected':'')+'>'+gchans[gi]+gt+'</option>';}
   gsel+='</select>';
   h+=panel('WiFi 信道','','信道即时切换（官方接口，不断网）。5G 推荐 36/149（避开雷达）；2.4G 推荐 1/6/11。注意：重启后恢复自动，持久设置请在小米管理页。',
-    '5G: '+d.wifi.a_ssid+' 当前信道'+(d.wifi.a_channel==='0'?'自动':d.wifi.a_channel)+' (频宽160MHz)<br>2.4G: '+d.wifi.g_ssid+' 当前信道'+(d.wifi.g_channel==='0'?'自动':d.wifi.g_channel)+'',
+    '5G: '+E(d.wifi.a_ssid)+' 当前信道'+(d.wifi.a_channel==='0'?'自动':E(d.wifi.a_channel))+' (频宽160MHz)<br>2.4G: '+E(d.wifi.g_ssid)+' 当前信道'+(d.wifi.g_channel==='0'?'自动':E(d.wifi.g_channel))+'',
     '<div class="row">5G 信道 '+asel+'<button class="btn" data-act="wifi_channel" data-band="5g" data-inp="a-ch">切换5G信道</button></div>'+
     '<div class="row">2.4G 信道 '+gsel+'<button class="btn" data-act="wifi_channel" data-band="2g" data-inp="g-ch">切换2.4G信道</button></div>',
     '');
   h+=panel('SSH 解锁',badge(d.ssh),'root · 开机自愈 '+(d.auto_ssh?'已开':'已关')+'。别升级固件（1.0.24）否则全丢。','','','');
   // 设备管理
-  var dv='';d.devices.forEach(function(x){dv+='<div class="item"><span class="val">'+x.host+'</span><span class="val">'+x.ip+'</span><span class="val">'+x.mac+'</span></div>';});
+  var dv='';d.devices.forEach(function(x){dv+='<div class="item"><span class="val">'+E(x.host)+'</span><span class="val">'+E(x.ip)+'</span><span class="val">'+E(x.mac)+'</span></div>';});
   h+=panel('在线设备',d.devices.length+' 台','当前 DHCP 分配的设备','<div class="list">'+dv+'</div>','');
   // 静态绑定
-  var bd='';d.binds.forEach(function(x){bd+='<div class="item"><span class="val">'+x.name+'</span><span class="val">'+x.mac+'</span><span class="val">'+x.ip+'</span><button class="btn red" data-act="device_unbind" data-id="'+x.id+'" data-confirm="解除绑定？">解绑</button></div>';});
+  var bd='';d.binds.forEach(function(x){bd+='<div class="item"><span class="val">'+E(x.name)+'</span><span class="val">'+E(x.mac)+'</span><span class="val">'+E(x.ip)+'</span><button class="btn red" data-act="device_unbind" data-id="'+E(x.id)+'" data-confirm="解除绑定？">解绑</button></div>';});
   h+=panel('静态 IP 绑定','','把设备固定为指定 IP（端口转发前提）。填设备的 MAC 和想固定的 IP。','<div class="row"><input class="inp" id="bd-mac" placeholder="MAC 如 aa:bb:cc:dd:ee:ff"><input class="inp" id="bd-ip" placeholder="IP 如 192.168.31.50"><input class="inp" id="bd-name" placeholder="名称(可选)">'+btn('绑定','',{act:'device_bind',inp:'bd-mac',inp2:'bd-ip',inp3:'bd-name'})+'</div><div class="list">'+bd+'</div>','');
   // 定时任务
-  var ct='';d.cron_tasks.forEach(function(x){ct+='<div class="item"><span class="val">'+x+'</span><button class="btn red" data-act="cron_del" data-line="'+x+'" data-confirm="删除该任务？">删</button></div>';});
+  var ct='';d.cron_tasks.forEach(function(x){ct+='<div class="item"><span class="val">'+E(x)+'</span><button class="btn red" data-act="cron_del" data-line="'+E(x)+'" data-confirm="删除该任务？">删</button></div>';});
   h+=panel('定时任务','','格式: 分 时 日 月 周 命令。例 "0 4 * * * reboot" = 每天4点重启路由器。','<div class="row"><input class="inp" id="cr-s" placeholder="如 0 4 * * *"><input class="inp wide" id="cr-c" placeholder="命令 如 reboot"><button class="btn" data-act="cron_add" data-inp="cr-s" data-inp2="cr-c">添加</button></div><div class="list">'+ct+'</div>','');
   // 系统操作
   // LED + 备份 + Guest
@@ -980,7 +1018,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/api":
+        if not self._gate():
+            return
+        p = self.path.split("?")[0]
+        if p == "/api":
             with data_lock:
                 d = {"cpu": list(history["cpu"]), "mem_used_mb": list(history["mem_used_mb"]),
                      "mem_total_mb": list(history["mem_total_mb"]), "temp": list(history["temp"]),
@@ -993,7 +1034,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "tx": history["tx"][-1] if history["tx"] else 0,
                                 "conn": history["conn"][-1] if history["conn"] else 0}}
             self._send(200, d)
-        elif self.path == "/api/config":
+        elif p == "/api/config":
             try:
                 self._send(200, get_config())
             except Exception as e:
@@ -1015,7 +1056,37 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+    def _gate(self):
+        # 防 DNS rebinding：本地模式 Host 必须是回环地址（--lan 时不限制）
+        if not LAN_MODE:
+            h = (self.headers.get("Host") or "").split(":")[0].strip("[]").lower()
+            if h not in ("127.0.0.1", "localhost", "::1"):
+                self._send(403, {"ok": False, "error": "illegal host"})
+                return False
+        # 防 CSRF：浏览器跨站 POST 必带 Origin/Referer 且与 Host 一致；无 Origin 的 CLI 直连放行
+        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if origin:
+            try:
+                net = urllib.parse.urlparse(origin).netloc.lower()
+            except Exception:
+                net = "?"
+            if net != (self.headers.get("Host") or "").lower():
+                self._send(403, {"ok": False, "error": "origin check failed"})
+                return False
+        # 令牌：--lan 模式必配；POST 走 X-Panel-Token 头或 ?token=
+        if PANEL_TOKEN:
+            if self.headers.get("X-Panel-Token") == PANEL_TOKEN:
+                return True
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if PANEL_TOKEN in qs.get("token", []):
+                return True
+            self._send(403, {"ok": False, "error": "unauthorized"})
+            return False
+        return True
+
     def do_POST(self):
+        if not self._gate():
+            return
         if self.path == "/api/act":
             try:
                 ln = int(self.headers.get("Content-Length", 0))
@@ -1056,30 +1127,45 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+LAN_MODE = False
+PANEL_TOKEN = ""
+
 def main():
-    global HOST, SSHPORT, USER, PASSWD, WEBPORT
+    global HOST, SSHPORT, USER, PASSWD, WEBPORT, LAN_MODE, PANEL_TOKEN
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=HOST)
     ap.add_argument("--port", type=int, default=SSHPORT)
     ap.add_argument("--user", default=USER)
     ap.add_argument("--passwd", default=PASSWD)
     ap.add_argument("--web", type=int, default=WEBPORT)
+    ap.add_argument("--lan", action="store_true", help="绑定所有网卡允许局域网访问（必须同时提供 --token）")
+    ap.add_argument("--token", default=os.environ.get("ROUTER_PANEL_TOKEN", ""), help="访问令牌；--lan 时必填")
     a = ap.parse_args()
     HOST, SSHPORT, USER, PASSWD, WEBPORT = a.host, a.port, a.user, a.passwd, a.web
+    if a.lan and not a.token:
+        print("[!] --lan 会把面板暴露到局域网，必须同时设置 --token（或环境变量 ROUTER_PANEL_TOKEN）")
+        return
+    LAN_MODE, PANEL_TOKEN = a.lan, a.token
 
     threading.Thread(target=collector_loop, daemon=True).start()
     time.sleep(2)
     import socket as _sock
-    class DualStackServer(ThreadingHTTPServer):
-        address_family = _sock.AF_INET6
-        def server_bind(self):
-            try:
-                self.socket.setsockopt(_sock.IPPROTO_IPV6, _sock.IPV6_V6ONLY, 0)
-            except OSError:
-                pass
-            super().server_bind()
-    srv = DualStackServer(("::", WEBPORT), Handler)
-    print("AX3000E 监控+配置中心(中文): http://127.0.0.1:" + str(WEBPORT) + " 或 http://localhost:" + str(WEBPORT))
+    if LAN_MODE:
+        class DualStackServer(ThreadingHTTPServer):
+            address_family = _sock.AF_INET6
+            def server_bind(self):
+                try:
+                    self.socket.setsockopt(_sock.IPPROTO_IPV6, _sock.IPV6_V6ONLY, 0)
+                except OSError:
+                    pass
+                super().server_bind()
+        srv = DualStackServer(("::", WEBPORT), Handler)
+        where = "0.0.0.0(双栈)/%d · 令牌认证已启用" % WEBPORT
+    else:
+        srv = ThreadingHTTPServer(("127.0.0.1", WEBPORT), Handler)
+        where = "127.0.0.1:%d (仅本机)" % WEBPORT
+    print("AX3000E 主路由版监控+配置中心(中文): http://127.0.0.1:" + str(WEBPORT))
+    print("  监听: " + where)
     print("  路由器: " + USER + "@" + HOST + ":" + str(SSHPORT) + "  (Ctrl+C 停止)")
     try:
         srv.serve_forever()

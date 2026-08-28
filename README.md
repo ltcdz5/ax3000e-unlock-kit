@@ -8,7 +8,7 @@
 
 ```
 panel/    router_monitor_ap.py        中继(AP)面板·核心逻辑  ·+ monitor_web.py 服务/认证 ·+ monitor_page.html 前端
-          router_monitor_ax3000e.py   主路由模式完整版面板
+          router_monitor_ax3000e.py   主路由模式完整版面板（已对齐 AP 面板安全基线，见下方安全说明）
 deploy/   oneclick_deploy.py          SSH 通了以后一键部署 DNS/去广告/自愈
           一键部署.bat                 Windows 双击入口
 router/   auto_ssh.sh                 ★ v5 自愈脚本：解锁+插件重建+去广告列表自动刷新(放 /data/auto_ssh/)
@@ -16,6 +16,14 @@ router/   auto_ssh.sh                 ★ v5 自愈脚本：解锁+插件重建+
 docs/     自救手册.md                  SSH 失效时的分步自救流程
           使用说明-主路由面板.md        主路由模式面板说明
 ```
+
+## 面板安全基线（两个面板一致）
+
+- **默认只监听 127.0.0.1**，仅本机可访问；要局域网访问必须显式 `--lan --token <令牌>`（缺令牌直接拒启）
+- 所有 POST 经 **Host 回环校验 + Origin/Referer 同源校验**，--lan 模式另加令牌（POST 头 `X-Panel-Token`，浏览器 GET 用 `?token=`）
+- **全部写动作参数白名单校验**：IP/MAC/端口/信道/功率/域名/租期/带宽均有正则+范围检查，杜绝 uci 单引号拼接注入
+- 前端所有路由器返回字段经 HTML 转义后渲染，防存储型 XSS（DHCP 主机名等不可信字段）
+- 日常使用推荐 **AP 面板**（功能与安全迭代最活跃）；主路由面板适合切回主路由模式时临时使用
 
 ## 快速开始
 
