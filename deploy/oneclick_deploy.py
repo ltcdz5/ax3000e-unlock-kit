@@ -99,10 +99,21 @@ print("DNS 查询日志已启用（/tmp/dnsquery.log，面板实时显示）")
 # ============ 4. 去广告（anti-AD + yhosts） ============
 step(4, "去广告配置（anti-AD 10万条）")
 q(ssh, "curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw --connect-timeout 15 --max-time 90")
-q(ssh, "grep -vE 'byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance' /tmp/antiad_raw > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null")
-n = q(ssh, "wc -l < /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null")
-q(ssh, "gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz")
-print("anti-AD: %s 条（抖音系已过滤）" % n)
+raw_sz = q(ssh, "wc -c < /tmp/antiad_raw 2>/dev/null").strip()
+# 与面板/auto_ssh 相同的门槛：下载不完整绝不安装、绝不覆盖 /data 缓存
+if not (raw_sz.isdigit() and int(raw_sz) > 500000):
+    q(ssh, "rm -f /tmp/antiad_raw")
+    print("[!] anti-AD 下载异常（%s 字节），跳过安装以保留现有缓存" % (raw_sz or "0"))
+else:
+    q(ssh, "grep -vE 'byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance' /tmp/antiad_raw > /tmp/antiad_new.conf 2>/dev/null")
+    n = q(ssh, "wc -l < /tmp/antiad_new.conf 2>/dev/null").strip()
+    if not (n.isdigit() and int(n) > 1000):
+        q(ssh, "rm -f /tmp/antiad_raw /tmp/antiad_new.conf")
+        print("[!] anti-AD 过滤后条目异常（%s 行），跳过安装以保留现有缓存" % (n or "0"))
+    else:
+        q(ssh, "mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; "
+               "gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz.new && mv -f /data/antiad.gz.new /data/antiad.gz; rm -f /tmp/antiad_raw")
+        print("anti-AD: %s 条（抖音系已过滤）" % n)
 
 # ============ 5. 自愈脚本 auto_ssh + 应用 ============
 step(5, "自愈脚本部署（auto_ssh）")
@@ -111,7 +122,7 @@ if not os.path.isfile(AUTO_SSH):
     print("[!] 找不到 router/auto_ssh.sh（需与仓库一起分发），退出")
     sys.exit(1)
 with open(AUTO_SSH, encoding="utf-8") as f:
-    auto_ssh = f.read()
+    auto_ssh = f.read().replace("\r\n", "\n").replace("\r", "\n")  # Windows 检出为 CRLF，必须转 LF 否则 busybox sh 报错
 q(ssh, "mkdir -p /data/auto_ssh")
 b64 = base64.b64encode(auto_ssh.encode()).decode()
 q(ssh, "echo " + b64 + " | base64 -d > /data/auto_ssh/auto_ssh.sh; chmod +x /data/auto_ssh/auto_ssh.sh")
@@ -127,11 +138,16 @@ print("解析:", r1[:60])
 print("去广告:", r2[:60])
 ssh.close()
 
-panel = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "panel", "router_monitor_ax3000e.py"))
+panel = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "panel",
+                                      "router_monitor_ap.py" if mode == "ap" else "router_monitor_ax3000e.py"))
 if os.path.isfile(panel):
-    print("\n启动面板: python %s" % panel)
+    print("\n启动面板(%s模式): python %s" % (mode, panel))
     try:
-        subprocess.Popen([sys.executable, panel], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
+        env = dict(os.environ, ROUTER_HOST=IP)
+        if PASSWD:
+            env["ROUTER_PASSWD"] = PASSWD
+        subprocess.Popen([sys.executable, panel], env=env,
+                         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
         time.sleep(3)
         print("面板地址: http://localhost:8787")
     except OSError as e:

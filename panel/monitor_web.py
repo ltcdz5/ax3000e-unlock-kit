@@ -39,6 +39,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _host_ok(self):
+        # 防 DNS rebinding：本地模式下 Host 必须是回环地址
+        if self.ctx.get("lan"):
+            return True
+        h = (self.headers.get("Host") or "").split(":")[0].strip("[]").lower()
+        return h in ("127.0.0.1", "localhost", "::1")
+
+    def _origin_ok(self):
+        # 防 CSRF：浏览器发起的 POST（含跨站 form 简单请求）必带 Origin/Referer，
+        # 其 host 必须与本次请求 Host 一致；同源 fetch 天然满足。
+        # 无 Origin/Referer 的 POST 视为非浏览器直连（本地 CLI），仅 localhost 模式下允许。
+        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if not origin:
+            return not self.ctx.get("lan")
+        try:
+            net = urllib.parse.urlparse(origin).netloc.lower()
+        except Exception:
+            return False
+        return net == (self.headers.get("Host") or "").lower()
+
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -59,6 +79,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        if not self._host_ok():
+            return self._send(403, {"ok": False, "error": "illegal host"})
         if not self._auth_ok():
             return self._deny()
         p = self.path.split("?")[0]
@@ -93,6 +115,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False})
 
     def do_POST(self):
+        if not self._host_ok():
+            return self._send(403, {"ok": False, "error": "illegal host"})
+        if not self._origin_ok():
+            return self._send(403, {"ok": False, "error": "origin check failed"})
         if not self._auth_ok():
             return self._deny()
         p = self.path.split("?")[0]

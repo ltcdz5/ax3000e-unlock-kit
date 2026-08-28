@@ -1,0 +1,7 @@
+# 路由器上的 busybox sh 不认 CRLF；所有 shell 与 dnsmasq 配置强制 LF
+* text=auto
+*.sh text eol=lf
+*.conf text eol=lf
+*.py text eol=lf
+*.html text eol=lf
+*.bat text eol=crlf

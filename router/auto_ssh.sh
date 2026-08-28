@@ -51,7 +51,14 @@ apply_dns() {
     ip6tables -I FORWARD -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
     for svc in miwifi-roam miwifi-discovery trafficd; do killall $svc 2>/dev/null; done
 
-    echo "addn-hosts=/data/adblock.hosts" > /tmp/dnsmasq.d/99-adblock.conf
+    # 面板可持久关闭去广告（/data/.adblock_off），关闭时开机不拉起、并清掉运行态
+    adblock_on=1
+    [ -f /data/.adblock_off ] && adblock_on=0
+    if [ "$adblock_on" = "1" ]; then
+        echo "addn-hosts=/data/adblock.hosts" > /tmp/dnsmasq.d/99-adblock.conf
+    else
+        rm -f /tmp/dnsmasq.d/99-adblock.conf /tmp/dnsmasq.d/96-antiad.conf
+    fi
     uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
     [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
@@ -62,11 +69,11 @@ apply_dns() {
     else printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=114.114.114.114\nserver=4.2.2.2\n' > /tmp/dnsmasq.d/98-upstream.conf
     fi
     # 优先用本地缓存恢复广告表；缓存超过48小时才联网刷新
-    if [ -s /data/antiad.gz ]; then zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; refresh=1; fi
+    if [ "$adblock_on" = "1" ] && [ -s /data/antiad.gz ]; then zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; refresh=1; fi
     /etc/init.d/dnsmasq restart 2>/dev/null
 
     age_ok=$(find /data/antiad.gz -mmin +2880 2>/dev/null)
-    if [ "$refresh" != "1" ] || [ -n "$age_ok" ]; then
+    if [ "$adblock_on" = "1" ] && { [ "$refresh" != "1" ] || [ -n "$age_ok" ]; }; then
         (
             w=0
             while [ $w -lt 12 ]; do ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1 && break; w=$((w+1)); sleep 5; done

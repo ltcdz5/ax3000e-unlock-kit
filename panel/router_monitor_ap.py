@@ -34,6 +34,7 @@ history = {k: deque(maxlen=MAX_POINTS) for k in
 last_net = {}
 last_stat = {}
 collect_ms = 0
+collect_fails = 0
 
 
 def ssh_connect():
@@ -49,12 +50,16 @@ def sh(cmd, timeout=10):
     global ssh_client
     with ssh_lock:
         for _ in range(2):
+            sent = False
             try:
                 if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
                     ssh_client = ssh_connect()
                 stdin, stdout, stderr = ssh_client.exec_command(cmd, timeout=timeout)
+                sent = True
                 return stdout.read().decode("utf-8", "replace").strip()
             except Exception:
+                if sent:
+                    break  # 命令已下发（写读超时），重发会使非幂等命令执行两次
                 try:
                     ssh_client = ssh_connect()
                 except Exception:
@@ -67,15 +72,19 @@ def sh_write(cmd, data, timeout=15):
     global ssh_client
     with ssh_lock:
         for _ in range(2):
+            sent = False
             try:
                 if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
                     ssh_client = ssh_connect()
                 stdin, stdout, stderr = ssh_client.exec_command(cmd, timeout=timeout)
+                sent = True
                 stdin.write(data)
                 stdin.channel.shutdown_write()
                 stdout.read()
                 return True
             except Exception:
+                if sent:
+                    break
                 try:
                     ssh_client = ssh_connect()
                 except Exception:
@@ -96,7 +105,7 @@ def make_backup():
             if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
                 ssh_client = ssh_connect()
             stdin, stdout, stderr = ssh_client.exec_command(
-                "tar czf %s -C / etc/config etc/crontabs/root tmp/dnsmasq.d data/auto_ssh data/upstreams.conf data/adblock.hosts 2>/dev/null; wc -c < %s" % (remote, remote),
+                "tar czf %s -C / etc/config etc/crontabs/root tmp/dnsmasq.d data 2>/dev/null; wc -c < %s" % (remote, remote),
                 timeout=40)
             size = stdout.read().decode().strip()
             if not size.isdigit() or int(size) == 0:
@@ -132,7 +141,7 @@ def list_backups():
 
 
 def collect():
-    global collect_ms
+    global collect_ms, collect_fails
     now = time.time()
     t0 = now
     # 单次 SSH 往返拉回全部采集数据, 本地解析(替代原来的 5 次独立往返, 大幅降负载)
@@ -149,14 +158,16 @@ def collect():
     cpu_pct = 0.0
     parts = raw.split("@@")
     if len(parts) < 6:
+        collect_fails += 1
         return
+    collect_fails = 0
 
     st = parts[0].strip()
     if st.startswith("cpu"):
         p = st.split()
         try:
             idle = int(p[4]) + int(p[5])
-            total = sum(int(x) for x in p[1:8])
+            total = sum(int(x) for x in p[1:9])
             if last_stat:
                 dt = total - last_stat["total"]
                 if dt > 0:
@@ -226,11 +237,12 @@ def collect():
 
 
 def collector_loop():
+    global collect_fails
     while True:
         try:
             collect()
         except Exception:
-            pass
+            collect_fails += 1
         time.sleep(INTERVAL)
 
 
@@ -242,7 +254,7 @@ def get_config():
         "uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null",                                  # 1
         "test -f /tmp/dnsmasq.d/96-antiad.conf && wc -l < /tmp/dnsmasq.d/96-antiad.conf",  # 2
         "test -f /data/adblock.hosts && wc -l < /data/adblock.hosts",                      # 3
-        "ls /tmp/dnsmasq.d/ 2>/dev/null",                                                  # 4
+        "ls /tmp/dnsmasq.d/ 2>/dev/null; test -f /data/.adblock_off && echo ADOFF",           # 4
         "cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null",                                   # 5
         "ps | grep dropbear | grep -v grep",                                               # 6
         "test -f /data/auto_ssh/auto_ssh.sh && sed -n 2p /data/auto_ssh/auto_ssh.sh",      # 7
@@ -276,7 +288,7 @@ def get_config():
     cfg["cache_size"] = seg(1) or "150"
     cfg["adblock_antiad"] = num(2)
     cfg["adblock_yhosts"] = num(3)
-    cfg["adblock_enabled"] = "99-adblock.conf" in parts[4]
+    cfg["adblock_enabled"] = "ADOFF" not in parts[4]
     cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip()
                              for l in parts[5].splitlines() if l.startswith("address=/")]
     cfg["ssh"] = "dropbear" in parts[6]
@@ -368,8 +380,10 @@ def dns_latency(server, domain="www.baidu.com", tries=3):
         t0 = time.time()
         try:
             s.sendto(pkt, (server, 53))
-            s.recvfrom(4096)
-            ok.append((time.time() - t0) * 1000)
+            data, _ = s.recvfrom(4096)
+            # 校验应答 tid 与查询一致，避免把无关包当成功
+            if len(data) >= 2 and struct.unpack(">H", data[:2])[0] == tid:
+                ok.append((time.time() - t0) * 1000)
         except Exception:
             pass
         s.close()
@@ -387,12 +401,12 @@ def run_net_test():
             out = subprocess.run(ping_args + [host], capture_output=True, text=True, timeout=15)
             m = re.search(r"(?:平均|Average)\s*=\s*(\d+)", out.stdout) or \
                 re.search(r"=\s*[\d.]+/([\d.]+)/", out.stdout)
-            res.append("延迟 %s: %s ms" % (host, m.group(1) if m else "?"))
+            res.append("本机ping外网 %s: %s ms" % (host, m.group(1) if m else "?"))
         except Exception:
-            res.append("延迟 %s: 失败" % host)
+            res.append("本机ping外网 %s: 失败" % host)
     t0 = _t.time()
     sh("nslookup www.baidu.com 127.0.0.1 >/dev/null 2>&1")
-    res.append("DNS解析: %.0f ms" % ((_t.time() - t0) * 1000))
+    res.append("路由器侧解析(含SSH往返): %.0f ms" % ((_t.time() - t0) * 1000))
     # 手机链路：ARP 邻居表按状态优先级取一台确实可达的主机（dhcp.leases 既不按时序排序、字段序也随固件变化）
     gw = sh("ip route show default 2>/dev/null | awk '{print $3; exit}'").strip()
     neigh = sh("ip neigh show dev br-lan 2>/dev/null").splitlines()
@@ -444,14 +458,13 @@ def get_dns_stats():
 def do_action(action, params=None):
     params = params or {}
     if action == "adblock_toggle":
-        if sh("ls /tmp/dnsmasq.d/ 2>/dev/null").count("99-adblock.conf") > 0:
-            sh("rm -f /tmp/dnsmasq.d/99-adblock.conf")
-            msg = "去广告已关闭"
-        else:
-            sh("echo 'addn-hosts=/data/adblock.hosts' > /tmp/dnsmasq.d/99-adblock.conf")
-            msg = "去广告已开启"
-        sh("/etc/init.d/dnsmasq restart")
-        return msg
+        off = sh("test -f /data/.adblock_off && echo y") == "y"
+        if off:
+            sh("rm -f /data/.adblock_off; [ -s /data/antiad.gz ] && zcat /data/antiad.gz > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null; "
+               "echo 'addn-hosts=/data/adblock.hosts' > /tmp/dnsmasq.d/99-adblock.conf; /etc/init.d/dnsmasq restart")
+            return "去广告已开启（anti-AD 主列表 + yhosts，自 /data 缓存恢复）"
+        sh("touch /data/.adblock_off; rm -f /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/99-adblock.conf; /etc/init.d/dnsmasq restart")
+        return "去广告已全部关闭（含 anti-AD 10万条主列表）；状态持久化，重启后自愈脚本也不会拉起"
     if action == "antiad_update":
         # 下载耗时远超 sh() 默认超时，必须单独放宽，否则读流超时会被判失败并重复触发下载
         sh("curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw "
@@ -466,10 +479,10 @@ def do_action(action, params=None):
         if not n.isdigit() or int(n) < 1000:
             sh("rm -f /tmp/antiad_raw /tmp/antiad_new.conf")
             return "过滤后条目异常（%s 行），已保留原有 anti-AD 缓存" % (n or "0")
-        sh("mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; "
-           "gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz.new "
-           "&& mv -f /data/antiad.gz.new /data/antiad.gz; "
-           "rm -f /tmp/antiad_raw; /etc/init.d/dnsmasq restart")
+        sh("gzip -c /tmp/antiad_new.conf > /data/antiad.gz.new && mv -f /data/antiad.gz.new /data/antiad.gz; rm -f /tmp/antiad_raw")
+        if sh("test -f /data/.adblock_off && echo y") == "y":
+            return "anti-AD 缓存已更新: " + n + " 条（去广告处于关闭状态，开启后生效）"
+        sh("mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; /etc/init.d/dnsmasq restart")
         return "anti-AD 已更新: " + n + " 条"
     if action == "dnsmasq_restart":
         sh("/etc/init.d/dnsmasq restart")
@@ -483,7 +496,7 @@ def do_action(action, params=None):
         return "DNS 缓存已设为 " + v
     if action == "dns_add":
         s = params.get("server", "").strip()
-        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s):
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s) or any(int(o) > 255 for o in s.split(".")):
             return "无效 IP"
         sh("echo 'server=" + s + "' >> /tmp/dnsmasq.d/98-upstream.conf; /etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
         return "已添加上游 " + s
@@ -529,8 +542,9 @@ def do_action(action, params=None):
             return "信道须为数字"
         if ch == "0":
             return "请选择具体信道（自动模式重启后恢复）"
-        if not (1 <= int(ch) <= 177):
-            return "信道范围 1-177"
+        lo, hi = (1, 13) if band == "2g" else (32, 177)
+        if not (lo <= int(ch) <= hi):
+            return "2.4G 信道范围 1-13，5G 信道范围 32-177"
         # 注意: 实际函数名是 _set_channel(带下划线), 直接调 iwconfig 更可靠
         sh("iwconfig " + ifname + " channel " + ch)
         return "WiFi " + band + " 信道已即时切换为 " + ch + "（重启后恢复自动）"
@@ -673,7 +687,8 @@ def api_snapshot():
                            "tx": history["tx"][-1] if history["tx"] else 0,
                            "conn": history["conn"][-1] if history["conn"] else 0,
                            "load": history["load"][-1] if history["load"] else 0,
-                           "collect_ms": collect_ms}}
+                           "collect_ms": collect_ms,
+                           "ssh_ok": collect_fails < 3}}
 
 
 def parse_dns_queries(raw, limit=40):

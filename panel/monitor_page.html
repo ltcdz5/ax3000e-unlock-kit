@@ -235,7 +235,7 @@ function refresh(){
  fetch('/api').then(function(r){return r.json();}).then(function(d){
   var L=d.latest;
   var cs=document.getElementById('chip-ssh'),cd=document.getElementById('chip-dot'),cl=document.getElementById('chip-load'),cc=document.getElementById('chip-collect');
-  if(cs)cs.textContent='在线';if(cd)cd.className='dot ok';if(cl)cl.textContent=L.load;if(cc)cc.textContent=L.collect_ms+' ms';
+  if(cs)cs.textContent=L.ssh_ok?'在线':'路由器SSH断';if(cd)cd.className=L.ssh_ok?'dot ok':'dot bad';if(cl)cl.textContent=L.load;if(cc)cc.textContent=L.collect_ms+' ms';
   document.getElementById('c-cpu').textContent=L.cpu+'%';
   var sc=document.getElementById('s-cpu');sc.textContent=L.cpu<50?'空闲':(L.cpu<85?'中载':'高载');sc.className='s '+(L.cpu<50?'ok':(L.cpu<85?'warn':'bad'));
   var pct=L.mem_total_mb>0?Math.round(L.mem_used_mb/L.mem_total_mb*100):0;
