@@ -18,6 +18,8 @@ PASSWD = os.environ.get("ROUTER_PASSWD", "")
 WEBPORT = 8787
 INTERVAL = 3
 MAX_POINTS = 300
+# 面板管理的 LED 定时行标准格式（只匹配它，用户手写的其它 led_ctl 变体不会被当成面板的）
+LED_CRON_RE = re.compile(r"^\s*(\d+)\s+(\d+)\s+\*\s+\*\s+\*\s+/usr/sbin/led_ctl\s+led_(on|off)\b")
 
 try:
     import paramiko
@@ -358,13 +360,14 @@ def get_config():
             devices.append({"ip": p[0], "mac": mac, "host": leases.get(mac, ""), "state": p[-1]})
     cfg["devices"] = devices
     cfg["dns_queries"] = parse_dns_queries(parts[18])
-    # 定时任务（行尾 #panel 标记归属面板的 cron 行）
+    # 定时任务（行尾 #panel 标记归属面板的 cron 行；LED 定时行单独可见）
     crontab = parts[15].splitlines()
-    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab if l.rstrip().endswith("#panel")]
-    # LED 定时计划（从 crontab 的 led_ctl 行解析）
+    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab if l.rstrip().endswith("#panel")] + \
+                        [l.rstrip() for l in crontab if LED_CRON_RE.search(l) and not l.rstrip().endswith("#panel")]
+    # LED 定时计划（只认面板管理的标准格式行，避免把手写的其它 LED 定时当成自己的）
     led_on_t, led_off_t = "", ""
     for l in crontab:
-        lm = re.match(r"(\d+)\s+(\d+)\s+\*\s+\*\s+\*\s+.*/usr/sbin/led_ctl\s+(led_on|led_off)", l)
+        lm = LED_CRON_RE.match(l)
         if lm:
             t = "%02d:%02d" % (int(lm.group(2)), int(lm.group(1)))
             if lm.group(3) == "led_on":
@@ -517,9 +520,12 @@ def update_antiad():
     if not n.isdigit() or int(n) < 1000:
         sh("rm -f /tmp/antiad_raw /tmp/antiad_new.conf")
         return "过滤后条目异常（%s 行），已保留原有 anti-AD 缓存" % (n or "0")
-    sh("gzip -c /tmp/antiad_new.conf > /data/antiad.gz.new && mv -f /data/antiad.gz.new /data/antiad.gz; "
-       "rm -f /tmp/antiad_raw")
+    # /data 仅 1.7MB，.new 双份落盘会撑爆卷（crontab 清空事故根因）——与 auto_ssh v5 一致：/tmp 暂存→删旧→cat 写新
+    sh("gzip -c /tmp/antiad_new.conf > /tmp/antiad_new.gz && "
+       "{ rm -f /data/antiad.gz; cat /tmp/antiad_new.gz > /data/antiad.gz; }; "
+       "rm -f /tmp/antiad_raw /tmp/antiad_new.gz")
     if _adblock_off():
+        sh("rm -f /tmp/antiad_new.conf")
         return "缓存已更新 " + n + " 条（去广告处于关闭状态，开启后生效）"
     sh("mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; /etc/init.d/dnsmasq restart")
     return "已更新 " + n + " 条"
@@ -541,8 +547,12 @@ def update_awavenue():
     if not n.isdigit() or int(n) < 300:
         sh("rm -f /tmp/awv_new.conf")
         return "有效条目异常（%s 行），已保留原有 AWAvenue 缓存" % (n or "0")
-    sh("gzip -c /tmp/awv_new.conf > /data/awavenue.gz.new && mv -f /data/awavenue.gz.new /data/awavenue.gz")
+    # 与 anti-AD 同款落盘：/tmp 暂存→删旧→cat 写新，防 .new 双份撑爆 /data
+    sh("gzip -c /tmp/awv_new.conf > /tmp/awv_new.gz && "
+       "{ rm -f /data/awavenue.gz; cat /tmp/awv_new.gz > /data/awavenue.gz; }; "
+       "rm -f /tmp/awv_new.gz")
     if _adblock_off():
+        sh("rm -f /tmp/awv_new.conf")
         return "缓存已更新 " + n + " 条（去广告处于关闭状态，开启后生效）"
     sh("mv -f /tmp/awv_new.conf /tmp/dnsmasq.d/90-awavenue.conf; /etc/init.d/dnsmasq restart")
     return "已更新 " + n + " 条"
@@ -724,11 +734,12 @@ def do_action(action, params=None):
             hh, mm = t.split(":")
             return mm + " " + hh
         lines = sh("cat /etc/crontabs/root 2>/dev/null").splitlines()
-        if not lines:
-            return "读取 crontab 失败"
-        keep = [l for l in lines if "led_ctl" not in l]
-        keep.append("%s * * * /usr/sbin/led_ctl led_on > /dev/null 2>&1" % _cron(on_t))
-        keep.append("%s * * * /usr/sbin/led_ctl led_off > /dev/null 2>&1" % _cron(off_t))
+        if not lines or lines == [""]:
+            return "读取 crontab 失败（为空或 SSH 异常），已放弃写入以防清空"
+        # 只删面板管理的标准格式 LED 行，用户手写的其它 led_ctl 变体不动
+        keep = [l for l in lines if not LED_CRON_RE.match(l)]
+        keep.append("%s * * * /usr/sbin/led_ctl led_on > /dev/null 2>&1 #panel-led" % _cron(on_t))
+        keep.append("%s * * * /usr/sbin/led_ctl led_off > /dev/null 2>&1 #panel-led" % _cron(off_t))
         if not sh_write("cat > /etc/crontabs/root", "\n".join(keep) + "\n"):
             return "写入 crontab 失败"
         sh("/etc/init.d/cron restart")
