@@ -9,7 +9,7 @@ import sys, os, time, subprocess, base64
 sys.stdout.reconfigure(encoding='utf-8')
 
 IP = sys.argv[1] if len(sys.argv) > 1 else "192.168.31.1"
-SSHPORT, USER, PASSWD = 22, "root", os.environ.get("ROUTER_PASSWD", "<改成你的路由器SSH密码>")
+SSHPORT, USER, PASSWD = 22, "root", os.environ.get("ROUTER_PASSWD", "")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 try:
@@ -44,8 +44,13 @@ def step(n, title):
     print("=" * 50)
 
 # ============ 1. SSH 检测/解锁引导 ============
+if not PASSWD:
+    import getpass
+    PASSWD = getpass.getpass("路由器 root SSH 密码（免输入可先 set ROUTER_PASSWD=...）: ")
+    if not PASSWD:
+        print("[!] 未提供密码，退出")
+        sys.exit(1)
 step(1, "SSH 连接检测: %s" % IP)
-print("尝试 root 用户连接（密码来自环境变量 ROUTER_PASSWD）...")
 ssh = ssh_connect()
 if not ssh:
     print("""

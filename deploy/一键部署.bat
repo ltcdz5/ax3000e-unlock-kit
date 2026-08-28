@@ -12,6 +12,6 @@ echo 参数: 一键部署.bat [AX3000E-IP]
 echo   默认 192.168.31.1（主路由）
 echo   AP 模式填实际地址，如: 一键部署.bat 192.168.2.100
 echo.
-python "%~dp0一键部署.py" %1
+python "%~dp0oneclick_deploy.py" %1
 echo.
 pause
