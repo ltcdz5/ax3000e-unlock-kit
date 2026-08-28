@@ -1,35 +1,28 @@
-# 小米 AX3000E 双模式全套留存：SSH 解锁 + 去广告/DNS 定制 + 监控面板
+# 小米 AX3000E 双模式套件：SSH 解锁 + 去广告/DNS 定制 + 监控面板
 
-> 适用：小米 AX3000E（RN07）/ 同代 IPQ 平台（AX3000T 等思路一致）。
-> 官方固件 **1.0.24**；**中继/AP 模式**（挂上级路由后）与**主路由模式**（自行拨号）均覆盖，SSH 解锁与自愈体系两模式通用。
-> ⚠️ 仅供学习与自有设备折腾使用；操作路由器风险自负。**升级固件 = 解锁全部报废**。
+> 适用小米 AX3000E（RN07），同代 IPQ 平台（AX3000T 等）思路一致。
+> 官方固件 **1.0.24**；**中继/AP** 与 **主路由** 两种模式均覆盖，SSH 解锁与自愈体系通用。
+> ⚠️ 仅供学习与自有设备折腾使用，风险自负。**升级固件 = 解锁全部报废。**
 
 ## 目录结构
 
 ```
-panel/    router_monitor_ap.py        中继(AP)面板·核心逻辑  ·+ monitor_web.py 服务/认证 ·+ monitor_page.html 前端
-          router_monitor_ax3000e.py   主路由模式完整版面板（已对齐 AP 面板安全基线，见下方安全说明）
-deploy/   oneclick_deploy.py          SSH 通了以后一键部署 DNS/去广告/自愈
-          一键部署.bat                 Windows 双击入口
-router/   auto_ssh.sh                 ★ v5 自愈脚本：解锁+插件重建+去广告列表自动刷新(放 /data/auto_ssh/)
-          configs/                    各配置持久副本(upstreams/bytedance/noipv6/microsoft/logqueries)
+panel/    router_monitor_ap.py        AP 面板（核心 + monitor_web.py 服务层 + monitor_page.html 前端）
+          router_monitor_ax3000e.py   主路由面板（端口转发/QoS/DHCP/防火墙，安全基线与 AP 面板一致）
+          Start-*.bat                 Windows 一键启动器（自动装依赖，见下）
+router/   auto_ssh.sh                 ★ v5 自愈脚本（放 /data/auto_ssh/，install 注册开机钩子）
+          configs/                    各配置持久副本（upstreams/bytedance/noipv6/microsoft/logqueries）
+deploy/   一键部署.bat / .py          SSH 通了以后一键部署 DNS/去广告/自愈
 docs/     自救手册.md                  SSH 失效时的分步自救流程
-          使用说明-主路由面板.md        主路由模式面板说明
 ```
-
-## 面板安全基线（两个面板一致）
-
-- **默认只监听 127.0.0.1**，仅本机可访问；要局域网访问必须显式 `--lan --token <令牌>`（缺令牌直接拒启）
-- 所有 POST 经 **Host 回环校验 + Origin/Referer 同源校验**，--lan 模式另加令牌（POST 头 `X-Panel-Token`，浏览器 GET 用 `?token=`）
-- **全部写动作参数白名单校验**：IP/MAC/端口/信道/功率/域名/租期/带宽均有正则+范围检查，杜绝 uci 单引号拼接注入
-- 前端所有路由器返回字段经 HTML 转义后渲染，防存储型 XSS（DHCP 主机名等不可信字段）
-- 两个面板按当前模式二选一：**中继/AP 模式 → AP 面板**（`router_monitor_ap.py`，日常推荐、迭代最活跃）；**主路由模式 → `router_monitor_ax3000e.py`**（含端口转发/QoS/DHCP 绑定/防火墙，安全基线已对齐）
 
 ## 快速开始
 
-### 1. 解锁 SSH（不丢配置）
-1) 浏览器登录管理页，从地址栏复制 `;stok=` 后面的字符串；
-2) 把 `<IP>`/`<STOK>` 替换后逐条执行：
+**最简路径**：到 [Releases](../../releases) 下载 zip 解压 → 按第 1 步解锁 → 双击 `panel/` 里对应模式的启动器。
+
+### 1 · 解锁 SSH（不丢配置）
+
+浏览器登录管理页，从地址栏复制 `;stok=` 后面的字符串，替换 `<IP>`/`<STOK>` 后逐条执行：
 
 ```powershell
 $B="http://<IP>/cgi-bin/luci/;stok=<STOK>/api/xqsystem/start_binding"
@@ -40,77 +33,84 @@ curl.exe -X POST $B -d "uid=1234&key=1234'%0Ased%20-i%20's%2Fchannel%3D.*%2Fchan
 curl.exe -X POST $B -d "uid=1234&key=1234'%0A%2Fetc%2Finit.d%2Fdropbear%20start'"
 ```
 
-3) `Test-NetConnection <IP> -Port 22` 应为 True。
+`Test-NetConnection <IP> -Port 22` 应为 True。
 
-⚠️ 本机实测坑：网上常见的 `api/misystem/arn_switch` 在 RN07 上是**假接口**——返回 `{"code":0}` 但不执行任何命令。请用上面的 `xqsystem/start_binding`（key 参数注入）。
+⚠️ 网上常见的 `api/misystem/arn_switch` 在 RN07 上是**假接口**——返回 `{"code":0}` 但不执行任何命令，请认准上面的 `xqsystem/start_binding`。
 
-### 2. 改 root 密码 & 固化
+### 2 · 改密码 & 固化自愈
+
 ```powershell
 ssh -oHostKeyAlgorithms=+ssh-rsa -oPubkeyAcceptedAlgorithms=+ssh-rsa root@<IP>
-# 登录后：
-echo -e '你的密码\n你的密码' | passwd root
-mkdir -p /data/auto_ssh
 ```
-把本仓库 `router/auto_ssh.sh` 上传到 `/data/auto_ssh/auto_ssh.sh` 并注册开机钩子：
+
 ```sh
+echo -e '你的密码\n你的密码' | passwd root
+mkdir -p /data/auto_ssh          # 上传本仓库 router/auto_ssh.sh 到这里
 chmod +x /data/auto_ssh/auto_ssh.sh
-/bin/sh /data/auto_ssh/auto_ssh.sh install      # 注册 firewall.include
+/bin/sh /data/auto_ssh/auto_ssh.sh install     # 注册 firewall.include 开机钩子
 grep -q auto_ssh /etc/crontabs/root || echo '* * * * * /bin/sh /data/auto_ssh/auto_ssh.sh' >> /etc/crontabs/root
 /etc/init.d/cron restart
 ```
 
-### 3. 部署插件（DNS 上游/去广告/抖音定向/禁 IPv6）
-Windows 下直接运行 `deploy/一键部署.bat <IP>`；脚本会从 `anti-ad.net` 拉最新列表并落到 `/data/` 持久分区。
+### 3 · 一键部署插件
 
-### 4. 启动监控面板（Windows 推荐：双击一键启动）
-下载 release 里的完整 zip 解压后，直接双击：
-- `panel/Start-AP-panel.bat` —— 中继/AP 模式（日常推荐，127.0.0.1:8787）
-- `panel/Start-MainRouter-panel.bat` —— 主路由模式（127.0.0.1:8788，含端口转发/QoS/DHCP/防火墙）
+Windows 下运行 `deploy/一键部署.bat <IP>`：DNS 上游、anti-AD 去广告、抖音定向、禁 IPv6 一次落齐，持久到 `/data/`。
 
-首次运行自动装依赖（paramiko<4），按提示输入路由器 IP 和 SSH 密码即可；不要自己构建。
-命令行等价方式：
-```
-set ROUTER_PASSWD=你的密码 && python panel/router_monitor_ap.py   # 浏览器开 http://127.0.0.1:8787
-```
-依赖：`pip install -r requirements.txt`（paramiko 必须 <4，5.x 移除了 ssh-rsa，连不上老 dropbear）。
-两个面板默认都只监听 127.0.0.1；需局域网访问时加 `--lan --token 你的令牌`（HTTP Basic 认证，浏览器原生弹框，缺令牌拒绝启动）。
+### 4 · 启动面板
 
-## 三层自愈体系（重启不怕）
+双击启动器，首次自动装依赖，按提示输 IP 和 SSH 密码即可：
 
-| 层 | 触发方式 | 说明 |
+| 模式 | 启动器 | 地址 |
 |---|---|---|
-| 1 | firewall.include | 每次防火墙重载执行 `/data/auto_ssh/auto_ssh.sh` |
-| 2 | cron 每分钟 | 固件偶尔会重建 crontab 清掉这行——丢了就补一行 |
-| 3 | 脚本内重试线程 | 开机早期若一次失败，后台每 10s 重试最长 10 分钟 |
+| 中继/AP（日常推荐） | `panel/Start-AP-panel.bat` | 127.0.0.1:8787 |
+| 主路由（端口转发/QoS/DHCP/防火墙） | `panel/Start-MainRouter-panel.bat` | 127.0.0.1:8788 |
 
-v4 脚本特性：毫秒级防重复（marker）、广告列表用本地缓存且仅超 48h 才联网刷新、全部动作写 syslog（`grep auto_ssh /tmp/messages`）。
+命令行等价：`set ROUTER_PASSWD=密码 && python panel/router_monitor_ap.py`。
+依赖只有 `requirements.txt`（paramiko **<4**，5.x 移除了 ssh-rsa，连不上老 dropbear）。
 
-插件恢复顺序（重置后）：解锁 → 跑一键部署 → 从 `router/configs/` 恢复各文件到 `/data/` → `auto_ssh.sh install`。
+## 安全基线（两个面板一致）
+
+- 默认**只监听 127.0.0.1**；要局域网访问必须显式 `--lan --token <令牌>`，缺令牌拒启
+- 所有请求过 **Host 回环校验**（防 DNS rebinding）+ **Origin/Referer 同源校验**（防 CSRF）
+- `--lan` 模式启用 **HTTP Basic 令牌**（浏览器原生弹框，凭证自动附带所有请求）
+- 写动作参数**全白名单**：IP/MAC/端口/信道/功率/域名/租期/带宽均有正则+范围检查，杜绝 uci 注入
+- 前端所有路由器返回字段经 HTML 转义渲染，防存储型 XSS（DHCP 主机名等不可信字段）
+
+## 三层自愈（重启不怕）
+
+| 层 | 触发 | 说明 |
+|---|---|---|
+| 1 | firewall.include | 每次防火墙重载执行自愈脚本 |
+| 2 | cron 每分钟 | 固件偶尔重建 crontab 会清掉这行——丢了补一行即可 |
+| 3 | 脚本内重试 | 开机早期失败则后台每 10s 重试，最长 10 分钟 |
+
+v5 特性：毫秒级防重复触发；去广告列表本地缓存、超 48h 才联网刷新（下载不达标绝不覆盖在用缓存）；动作全写 syslog（`grep auto_ssh /tmp/messages`）。
+
+重置后恢复顺序：解锁 → 一键部署 → 从 `router/configs/` 恢复各文件到 `/data/` → `auto_ssh.sh install`。
 
 ## 常见问题
 
-- **SSH 又突然没了？** → 按 [docs/自救手册.md](docs/自救手册.md) 分步走（远程四连 curl 即可复活，不用重置）。
-- **IP 老漂移、每次失联？** → 在上级路由 DHCP 里把路由器 MAC 绑定静态地址，一劳永逸。
-- **中继模式下设备没去广告效果？** → 需在上级路由把 DHCP 下发的 DNS 指向本机 IP。
-- **为什么你们固件版本不能高？** → 新固件会封堵注入路径并清掉自愈；锁死 1.0.24 是底线。
+- **SSH 又没了？** → 按 [docs/自救手册.md](docs/自救手册.md) 四连 curl 复活，不用重置。
+- **IP 老漂移？** → 上级路由 DHCP 里按 MAC 绑静态地址，一劳永逸。
+- **中继模式下设备没去广告效果？** → 上级路由 DHCP 下发的 DNS 要指向本机 IP。
+- **为什么不能升固件？** → 新固件封堵注入路径并清掉自愈，锁死 1.0.24 是底线。
 
 ## 版本记录
 
-- 2026-08-28（v2.3.1，就地更新）：去广告换源——停更的 yhosts（上游 2025-03 归档，实测 90% 与 anti-AD 重合、仅 645 条独有）换成 AWAvenue 国内补充列表；`auto_ssh.sh` 升 v5，新增开机按 48h 年龄自动刷新 + 每日 04:30 定时刷新 + 双镜像回退，下载不达标绝不覆盖在用缓存；面板去广告卡片显示两个列表条数与新鲜度，「立即更新列表」一次刷两条。
-- 2026-08-28（v2.3）：安全加固（POST Origin 校验 + Host 防 rebinding）；去广告开关真实联动 anti-AD 且可持久关闭；备份补全 /data；部署按模式选面板、CRLF 根治（.gitattributes）。
-- 2026-08-28（v2.2）：面板健壮性修复——信道参数补校验（堵命令注入）、去广告下载失败不再覆盖好缓存、配置中心 20+ 次 SSH 往返合并为 1 次、屏蔽/上游删除改安全写回、网络测试跨平台、命中率统计去掉固定等待。
-- 2026-08-28（v2.1）：面板降载（采集 3s 间隔+开销可视）、米家云服务一键精简（重启自动恢复）、DNS 缓存命中率。
-- 2026-08-28：面板 v2（详见 Release）：配置真备份/下载、LED 手动+定时、负载与 IPv6 拦截状态、界面改版；凭据脱敏；`requirements.txt` 锁 `paramiko<4`。
-- 2026-08-27：v4 自愈脚本（防重复下载+缓存刷新+重试兜底）；冷启动演练通过；发现并绕开 arn_switch 假接口问题。
+| 日期 | 版本 | 要点 |
+|---|---|---|
+| 08-27 | v1.0 | 首版：v4 自愈脚本 + 双面板 + 冷启动演练通过；确认 arn_switch 为假接口 |
+| 08-28 | v2.1→v2.3 | 面板五连更：Origin/Host 校验、降载与命中率、备份/下载、去广告开关联动 |
+| 08-28 | v2.3.1 | 去广告换源：停更的 yhosts → AWAvenue；自愈升 v5（48h 缓存 + 每日 04:30 刷新 + 双镜像回退） |
+| 08-28 | v2.4→v2.5.0 | 备份/恢复五道防线、custom.conf 持久化、恢复白名单收紧 |
+| 08-28 | v2.5.1 | 主路由面板安全基线对齐：默认 127.0.0.1、--lan+令牌、uci 参数白名单、JS 转义 |
+| 08-28 | v2.6.0 | --lan 认证改 HTTP Basic（修回归）；内联 JSON XSS 逃逸；开箱即用 zip + 双启动器 |
 
-## 致谢 Acknowledgements
+## 致谢
 
-本项目站在社区成果之上，感谢：
-
-- [lemoeo/AX6S](https://github.com/lemoeo/AX6S) —— `auto_ssh.sh` 的原型与「firewall.include 固化」思路来源；本仓库 `router/auto_ssh.sh` 在其基础上重写（毫秒级防重复触发、去广告列表本地缓存+48h 刷新、后台重试兜底）。
-- [kjqq/AX3000E](https://github.com/kjqq/AX3000E) —— 《Xiaomi 小米路由器 AX3000E 科学上网教程》，本机型上较早的公开教程，机型侧的若干坑是先从它拿到参考的。
-- 社区公开教程（AX3000E / AX3000T 解锁流程的分享者们）—— `xqsystem/start_binding` key 参数注入方法来自相关文章，并非本项目首创。
-- [TG-Twilight/AWAvenue-Ads-Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule) —— 国内 App 广告/跟踪域名列表，本套件的去广告补充列表来源（原生 dnsmasq 格式，持续更新）。
-- [juewuy/ShellCrash](https://github.com/juewuy/ShellCrash) —— 官方固件上运行 Clash 的流行方案，常与本套件配合使用。
+- [lemoeo/AX6S](https://github.com/lemoeo/AX6S) —— auto_ssh 原型与「firewall.include 固化」思路来源，本仓库在其基础上重写
+- 社区教程分享者 —— `xqsystem/start_binding` 注入方法来自 AX3000E/T 相关公开文章，非本项目首创；[kjqq/AX3000E](https://github.com/kjqq/AX3000E) 是本机型较早的公开教程
+- [TG-Twilight/AWAvenue-Ads-Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule) —— 去广告补充列表来源
+- [juewuy/ShellCrash](https://github.com/juewuy/ShellCrash) —— 官方固件跑 Clash 的流行方案，常与本套件配合
 
 License: MIT
