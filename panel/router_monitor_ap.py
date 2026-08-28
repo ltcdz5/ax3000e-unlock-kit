@@ -169,16 +169,27 @@ def list_backups():
 
 
 # 恢复白名单：只解这些路径，其它一律不动（yhosts 遗迹/临时垃圾不入内）
+# 目录项必须以 "/" 结尾（前缀边界）；文件项精确匹配
 RESTORE_WHITELIST = (
     "etc/config/", "etc/crontabs/root", "tmp/dnsmasq.d/",
     "data/auto_ssh/", "data/upstreams.conf", "data/logqueries.conf",
     "data/noipv6.conf", "data/noresolv.conf", "data/bytedance.conf",
-    "data/awavenue.gz", "data/antiad.gz", "data/.adblock_off",
+    "data/microsoft.conf", "data/awavenue.gz", "data/antiad.gz",
+    "data/.adblock_off",
 )
 
 
 def _whitelisted(name):
-    return any(name == p.rstrip("/") or name.startswith(p) for p in RESTORE_WHITELIST)
+    # 拒绝路径穿越与绝对路径（纵深防御：备份包被恶意替换也不出白名单）
+    if name.startswith("/") or ".." in name.split("/"):
+        return False
+    for p in RESTORE_WHITELIST:
+        if p.endswith("/"):
+            if name.startswith(p):
+                return True
+        elif name == p:
+            return True
+    return False
 
 
 def upload_file(remote, blob, timeout=90):
@@ -244,12 +255,15 @@ def restore_backup(name):
     if not upload_file("/tmp/panel_restore.tar.gz", slim):
         return "上传失败（字节校验不通过），未动路由器任何配置"
     out = sh("tar xzf /tmp/panel_restore.tar.gz -C / 2>&1; echo RC=$?")
-    sh("rm -f /tmp/panel_restore.tar.gz /data/adblock.hosts /tmp/dnsmasq.d/99-adblock.conf; "
+    sh("rm -f /tmp/panel_restore.tar.gz")
+    if "RC=0" not in out:
+        return "解压失败，未重启任何服务（恢复前备份 %s 仍在，可重试或人工检查）：%s" % (pre, out[:120])
+    sh("rm -f /data/adblock.hosts /tmp/dnsmasq.d/99-adblock.conf; "
        "chmod +x /data/auto_ssh/auto_ssh.sh 2>/dev/null; "
        "/etc/init.d/cron restart; /etc/init.d/dnsmasq restart")
-    if "RC=0" not in out:
-        return "解压异常（已保留恢复前备份 %s）：%s" % (pre, out[:120])
-    return "恢复完成（%d 项；恢复前备份 %s）。cron 与 dnsmasq 已重启" % (len(members), pre)
+    return ("恢复完成（%d 项；恢复前备份 %s）。cron/dnsmasq 已重启；"
+            "/etc/config 内的网络与 WiFi 改动需重启路由器才生效。"
+            "注意：恢复只覆盖备份内文件，不删除备份中没有的多余文件" % (len(members), pre))
 
 
 def collect():

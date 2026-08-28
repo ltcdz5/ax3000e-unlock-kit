@@ -201,7 +201,7 @@ function renderCfg(c){
   '<div id="nt-result" class="num" style="margin-top:10px;font-size:12px;white-space:pre-line;line-height:1.8"></div>'}));
  var bl=(c.backups||[]).map(function(b){var d=new Date(b.mtime*1000);var mt=('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
   var kb=b.size<1048576?Math.round(b.size/1024)+' KB':(b.size/1048576).toFixed(1)+' MB';
-  return item('<span class="val">'+E(b.name)+'</span>','<span style="color:#7d8896">'+mt+' · '+kb+'</span><a class="dl" href="/download/'+encodeURIComponent(b.name)+'">下载</a>'+B('restore','恢复',{name:b.name},'恢复将覆盖路由器当前配置（/etc/config、dnsmasq、crontab、自愈脚本），恢复前会自动备份现状。确定恢复？','red'));});
+  return item('<span class="val">'+E(b.name)+'</span>','<span style="color:#7d8896">'+mt+' · '+kb+'</span><a class="dl" href="/download/'+encodeURIComponent(b.name)+'">下载</a>'+B('restore','恢复',{name:b.name},'恢复将覆盖路由器当前配置（/etc/config、dnsmasq、crontab、自愈脚本），恢复前会自动备份现状。注意：只覆盖备份内文件、不删多余文件；/etc/config 改动需重启路由器生效。确定恢复？','red'));});
  h.push(card({title:'配置备份',tip:'打包路由器配置拉回本机保存；重启/刷固件前先备份。',
   body:inpRow([B('backup','立即备份',{},'','green')])+(bl.length?lst(bl):'<div class="desc">暂无备份</div>')}));
  var svcs=(c.cloud_services||[]).map(function(s){
