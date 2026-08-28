@@ -30,7 +30,7 @@ description: 维护小米 AX3000E（RN07，固件 1.0.24）AP/中继模式路由
 
 ## 任务：SSH 突然连不上
 
-1. 先判定：`ping 192.168.2.106` 不通 → IP 漂了，按 MAC 找新 IP（自救手册 §按MAC找IP）。
+1. 先判定：`ping <路由器当前IP>` 不通 → IP 漂了，按 MAC 找新 IP（自救手册 §按MAC找IP）。
 2. IP 对但 22 端口不通 → 看 80 端口（管理页）是否活着；活着 = dropbear 没起。
 3. 恢复：`/data/auto_ssh/auto_ssh.sh` 三层自愈（firewall 钩子 / cron 每分钟 / 脚本内 10 分钟重试）通常几分钟内自己拉起来。等不到就按 `docs/自救手册.md` 用管理页 stok 走 `xqsystem/start_binding` 注入四连 curl 复活。**注意：网传 `arn_switch` 接口在本固件是假的（返回 code:0 但不执行）。**
 4. 复活后检查 `/etc/crontabs/root` 是否还有 `* * * * * /bin/sh /data/auto_ssh/auto_ssh.sh` 行（固件重建 crontab 会吃掉它）。

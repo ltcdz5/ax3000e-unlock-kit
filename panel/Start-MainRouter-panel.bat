@@ -10,8 +10,8 @@ if errorlevel 1 (
 )
 set /p ROUTER_HOST=Router IP [default 192.168.31.1]:
 if "%ROUTER_HOST%"=="" set ROUTER_HOST=192.168.31.1
-set /p ROUTER_PASSWD=Router SSH password:
-if "%ROUTER_PASSWD%"=="" (echo [!] password required & pause & exit /b)
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "$s = Read-Host 'Router SSH password' -AsSecureString; [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))"`) do set "ROUTER_PASSWD=%%p"
+if not defined ROUTER_PASSWD (echo [!] password required & pause & exit /b)
 set ROUTER_USER=root
 set ROUTER_SSH_PORT=22
 echo [i] starting main-router panel on http://127.0.0.1:8788 ...
