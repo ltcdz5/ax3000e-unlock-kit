@@ -236,44 +236,71 @@ def collector_loop():
 
 def get_config():
     cfg = {"host": HOST}
-    # DNS 上游
-    up = sh("cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null")
-    cfg["dns_upstreams"] = [l.replace("server=", "").strip() for l in up.splitlines() if l.startswith("server=")]
-    cfg["cache_size"] = sh("uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null") or "150"
-    # 去广告
-    cfg["adblock_antiad"] = sh("wc -l /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null").split()[0] if sh("test -f /tmp/dnsmasq.d/96-antiad.conf && echo y") == "y" else 0
-    cfg["adblock_yhosts"] = sh("wc -l /data/adblock.hosts 2>/dev/null").split()[0] if sh("test -f /data/adblock.hosts && echo y") == "y" else 0
-    cfg["adblock_enabled"] = "99-adblock.conf" in sh("ls /tmp/dnsmasq.d/ 2>/dev/null")
-    # 自定义屏蔽
-    custom = sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null")
-    cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip() for l in custom.splitlines() if l.startswith("address=/")]
-    # 服务状态
-    cfg["ssh"] = "dropbear" in sh("ps | grep dropbear | grep -v grep")
-    auto_ssh_raw = sh("test -f /data/auto_ssh/auto_ssh.sh && sed -n 2p /data/auto_ssh/auto_ssh.sh 2>/dev/null")
-    cfg["auto_ssh"] = bool(auto_ssh_raw.strip())
+    # 只读状态合并为单次 SSH 往返（原 20+ 次独立命令会与 3 秒采集循环抢 ssh_lock，界面卡顿）
+    parts = sh("; echo '@@'; ".join([
+        "cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null",                                 # 0
+        "uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null",                                  # 1
+        "test -f /tmp/dnsmasq.d/96-antiad.conf && wc -l < /tmp/dnsmasq.d/96-antiad.conf",  # 2
+        "test -f /data/adblock.hosts && wc -l < /data/adblock.hosts",                      # 3
+        "ls /tmp/dnsmasq.d/ 2>/dev/null",                                                  # 4
+        "cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null",                                   # 5
+        "ps | grep dropbear | grep -v grep",                                               # 6
+        "test -f /data/auto_ssh/auto_ssh.sh && sed -n 2p /data/auto_ssh/auto_ssh.sh",      # 7
+        "uptime",                                                                          # 8
+        "ip6tables -C FORWARD -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null && echo BLOCKED",  # 9
+        "ip -6 neigh show dev br-lan 2>/dev/null | grep lladdr | grep -cv '^fe80'",        # 10
+        "ps w | grep -E 'messagingagent|mosquitto|xq_info_sync_mqtt' | grep -v grep",      # 11
+        "ip route show default 2>/dev/null | awk '{print $3; exit}'",                      # 12
+        "cat /tmp/dhcp.leases 2>/dev/null",                                                # 13
+        "ip neigh show dev br-lan 2>/dev/null",                                            # 14
+        "cat /etc/crontabs/root 2>/dev/null",                                              # 15
+        "uci get xiaoqiang.common.XLED 2>/dev/null",                                       # 16
+        "uci show wireless 2>/dev/null",                                                   # 17
+        # 截断必须跟 SIGHUP，否则 dnsmasq 写入偏移不变会造出稀疏空洞
+        "[ $(wc -c < /tmp/dnsquery.log 2>/dev/null || echo 0) -gt 307200 ] "
+        "&& { > /tmp/dnsquery.log; kill -HUP $(pidof dnsmasq); }; "
+        "grep -F 'query[' /tmp/dnsquery.log 2>/dev/null | tail -n 120",                    # 18
+    ])).split("@@")
+    if len(parts) < 19:
+        parts += [""] * (19 - len(parts))
+
+    def seg(i):
+        return parts[i].strip()
+
+    def num(i):
+        s = seg(i).split()
+        return int(s[0]) if s and s[0].isdigit() else 0
+
+    cfg["dns_upstreams"] = [l.replace("server=", "").strip()
+                            for l in parts[0].splitlines() if l.startswith("server=")]
+    cfg["cache_size"] = seg(1) or "150"
+    cfg["adblock_antiad"] = num(2)
+    cfg["adblock_yhosts"] = num(3)
+    cfg["adblock_enabled"] = "99-adblock.conf" in parts[4]
+    cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip()
+                             for l in parts[5].splitlines() if l.startswith("address=/")]
+    cfg["ssh"] = "dropbear" in parts[6]
+    auto_ssh_raw = seg(7)
+    cfg["auto_ssh"] = bool(auto_ssh_raw)
     vm = re.search(r"v\d+\s*\([^)]*\)", auto_ssh_raw)
     cfg["auto_ssh_ver"] = vm.group(0) if vm else ""
-    cfg["uptime"] = sh("uptime").split(",")[0].strip() if sh("uptime") else ""
+    cfg["uptime"] = seg(8).split(",")[0].strip()
     cfg["temp"] = history["temp"][-1] if history["temp"] else 0
-    # IPv6 拦截状态（全局拦截=ip6tables 规则; 设备实际使用数=非fe80邻居）
-    v6_raw = sh("ip6tables -C FORWARD -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null && echo BLOCKED; echo @@; "
-                "ip -6 neigh show dev br-lan 2>/dev/null | grep lladdr | grep -cv '^fe80'")
-    v6p = v6_raw.split("@@")
-    cfg["ipv6_blocked"] = "BLOCKED" in (v6p[0] if v6p else "")
-    cfg["ipv6_clients"] = int(v6p[1].strip()) if len(v6p) > 1 and v6p[1].strip().isdigit() else 0
+    cfg["ipv6_blocked"] = "BLOCKED" in seg(9)
+    cfg["ipv6_clients"] = num(10)
     # 可精简的米家云服务（停止后重启路由器自动恢复）
-    ps_raw = sh("ps w | grep -E 'messagingagent|mosquitto|xq_info_sync_mqtt' | grep -v grep")
+    ps_raw = parts[11]
     svc_running = {n: (n in ps_raw) for n in ("messagingagent", "mosquitto", "xq_info_sync_mqtt")}
     cfg["cloud_services"] = [{"name": n, "running": svc_running[n]} for n in ("messagingagent", "mosquitto", "xq_info_sync_mqtt")]
-    cfg["gateway"] = sh("ip route show default 2>/dev/null | awk '{print $3; exit}'").strip()
+    cfg["gateway"] = seg(12)
     # 在线设备（中继模式：实时 ARP 邻居表，DHCP 租约仅补主机名）
     leases = {}
-    for line in sh("cat /tmp/dhcp.leases 2>/dev/null").splitlines():
+    for line in parts[13].splitlines():
         p = line.split()
         if len(p) >= 4:
             leases[p[1]] = p[3]
     devices = []
-    for line in sh("ip neigh show dev br-lan 2>/dev/null").splitlines():
+    for line in parts[14].splitlines():
         p = line.split()
         if len(p) >= 4 and p[0].startswith("192.168.") and "lladdr" in p:
             if cfg["gateway"] and p[0] == cfg["gateway"]:
@@ -281,21 +308,13 @@ def get_config():
             mac = p[p.index("lladdr") + 1]
             devices.append({"ip": p[0], "mac": mac, "host": leases.get(mac, ""), "state": p[-1]})
     cfg["devices"] = devices
-    # DNS 查询记录（log-queries，实时；截断必须跟 SIGHUP，否则 dnsmasq 写入偏移不变会造出稀疏空洞）
-    try:
-        sz = sh("wc -c < /tmp/dnsquery.log")
-        if sz.strip().isdigit() and int(sz.strip()) > 300 * 1024:
-            sh("> /tmp/dnsquery.log; kill -HUP $(pidof dnsmasq)")
-    except Exception:
-        pass
-    cfg["dns_queries"] = get_dns_queries(40)
+    cfg["dns_queries"] = parse_dns_queries(parts[18])
     # 定时任务（行尾 #panel 标记归属面板的 cron 行）
-    crontab = sh("cat /etc/crontabs/root 2>/dev/null")
-    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab.splitlines()
-                         if l.rstrip().endswith("#panel")]
+    crontab = parts[15].splitlines()
+    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab if l.rstrip().endswith("#panel")]
     # LED 定时计划（从 crontab 的 led_ctl 行解析）
     led_on_t, led_off_t = "", ""
-    for l in crontab.splitlines():
+    for l in crontab:
         lm = re.match(r"(\d+)\s+(\d+)\s+\*\s+\*\s+\*\s+.*/usr/sbin/led_ctl\s+(led_on|led_off)", l)
         if lm:
             t = "%02d:%02d" % (int(lm.group(2)), int(lm.group(1)))
@@ -305,12 +324,10 @@ def get_config():
                 led_off_t = t
     cfg["led_schedule"] = {"on": led_on_t, "off": led_off_t}
     # LED（用官方 XLED 状态, 与 led_ctl 一致; 读 uci 而非直接写 sysfs）
-    led_b = sh("uci get xiaoqiang.common.XLED 2>/dev/null")
-    cfg["led_blue"] = led_b.strip() == "1"
-    # WiFi 状态（单次 uci show 拉回, 本地解析, 替代 12 次独立 SSH）
-    wraw = sh("uci show wireless 2>/dev/null")
+    cfg["led_blue"] = seg(16) == "1"
+    # WiFi 状态（单次 uci show 拉回, 本地解析）
     uci = {}
-    for line in wraw.splitlines():
+    for line in parts[17].splitlines():
         if "=" in line:
             k, v = line.split("=", 1)
             uci[k.strip()] = v.strip().strip("'")
@@ -363,29 +380,32 @@ def run_net_test():
     """实时网络测试：外网延迟 + DNS + 手机链路（宽带测速走中科大）"""
     import subprocess, time as _t
     res = []
+    # Windows ping 用 -n(次数)/-w(毫秒超时)，POSIX 用 -c/-W(秒)
+    ping_args = ["ping", "-n", "4", "-w", "2000"] if os.name == "nt" else ["ping", "-c", "4", "-W", "2"]
     for host in ["223.5.5.5", "119.29.29.29"]:
         try:
-            out = subprocess.run(["ping", "-n", "4", "-w", "2000", host], capture_output=True, text=True, timeout=15)
-            m = re.search(r"(?:平均|Average)\s*=\s*(\d+)", out.stdout)
+            out = subprocess.run(ping_args + [host], capture_output=True, text=True, timeout=15)
+            m = re.search(r"(?:平均|Average)\s*=\s*(\d+)", out.stdout) or \
+                re.search(r"=\s*[\d.]+/([\d.]+)/", out.stdout)
             res.append("延迟 %s: %s ms" % (host, m.group(1) if m else "?"))
         except Exception:
             res.append("延迟 %s: 失败" % host)
     t0 = _t.time()
     sh("nslookup www.baidu.com 127.0.0.1 >/dev/null 2>&1")
     res.append("DNS解析: %.0f ms" % ((_t.time() - t0) * 1000))
-    # 手机链路：动态找 DHCP 租约里的一个主机（替代硬编码 MAC）
-    mip = ""
-    leases = sh("cat /tmp/dhcp.leases 2>/dev/null").splitlines()
-    candidates = []
-    for line in leases:
-        p = line.split()
-        if len(p) >= 4 and p[1].startswith("192.168."):
-            candidates.append(p[1])
-    # 排除自身路由网关和上级路由, 取最后一个(通常是最近接入的设备)
+    # 手机链路：ARP 邻居表按状态优先级取一台确实可达的主机（dhcp.leases 既不按时序排序、字段序也随固件变化）
     gw = sh("ip route show default 2>/dev/null | awk '{print $3; exit}'").strip()
-    for ip in candidates:
-        if ip != HOST and ip != gw:
-            mip = ip
+    neigh = sh("ip neigh show dev br-lan 2>/dev/null").splitlines()
+    mip = ""
+    for state in ("REACHABLE", "STALE", "DELAYED", "PROBE"):
+        for line in neigh:
+            p = line.split()
+            if len(p) >= 4 and p[0].startswith("192.168.") and p[-1] == state \
+                    and p[0] != gw and p[0] != HOST:
+                mip = p[0]
+                break
+        if mip:
+            break
     if mip:
         r = sh("ping -c 3 " + mip + " 2>/dev/null | grep -o 'avg = [0-9.]*'")
         res.append("设备WiFi链路(" + mip + "): " + (r if r else "设备未响应"))
@@ -395,11 +415,17 @@ def run_net_test():
 
 
 def get_dns_stats():
-    """dnsmasq 内置统计（SIGUSR1 转储；因 log-facility 指向查询日志，从该文件提取最后一次转储），失败返回 None"""
-    sh("kill -USR1 $(pidof dnsmasq)")
-    time.sleep(1.5)
-    raw = sh("grep 'queries forwarded' /tmp/dnsquery.log 2>/dev/null | tail -n 1; echo '@@'; "
-             "grep 'cache size' /tmp/dnsquery.log 2>/dev/null | tail -n 1")
+    """dnsmasq 内置统计（SIGUSR1 转储）。等待放在路由器侧：出现新转储行即刻返回，
+    固定 sleep 在负载高时会读到上一次的旧统计。"""
+    raw = sh(
+        "n=$(grep -c 'queries forwarded' /tmp/dnsquery.log 2>/dev/null); n=${n:-0}; "
+        "kill -USR1 $(pidof dnsmasq); i=0; "
+        "while [ $i -lt 25 ]; do i=$((i+1)); sleep 0.2; "
+        "[ -e /tmp/dnsquery.log ] || break; "
+        "m=$(grep -c 'queries forwarded' /tmp/dnsquery.log 2>/dev/null); m=${m:-0}; "
+        "[ $m -gt $n ] && break; done; "
+        "grep 'queries forwarded' /tmp/dnsquery.log 2>/dev/null | tail -n 1; echo '@@'; "
+        "grep 'cache size' /tmp/dnsquery.log 2>/dev/null | tail -n 1", timeout=20)
     p = raw.split("@@")
     fwd = local = csize = None
     m1 = re.search(r"queries forwarded (\d+), queries answered locally (\d+)", p[0] if p else "")
@@ -427,16 +453,32 @@ def do_action(action, params=None):
         sh("/etc/init.d/dnsmasq restart")
         return msg
     if action == "antiad_update":
-        sh("curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw --connect-timeout 15 --max-time 60")
-        sh("grep -vE 'byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance' /tmp/antiad_raw > /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null")
-        n = sh("wc -l /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null").split()[0]
-        sh("gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz; /etc/init.d/dnsmasq restart")
+        # 下载耗时远超 sh() 默认超时，必须单独放宽，否则读流超时会被判失败并重复触发下载
+        sh("curl -sL 'https://anti-ad.net/anti-ad-for-dnsmasq.conf' -o /tmp/antiad_raw "
+           "--connect-timeout 15 --max-time 90", timeout=100)
+        raw = sh("wc -c < /tmp/antiad_raw 2>/dev/null").strip()
+        # 与 auto_ssh.sh 相同的体积门槛：下载不完整时绝不覆盖已有缓存
+        if not raw.isdigit() or int(raw) < 500000:
+            sh("rm -f /tmp/antiad_raw")
+            return "下载未完成（%s 字节），已保留原有 anti-AD 缓存" % (raw or "0")
+        sh("grep -vE 'byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance' /tmp/antiad_raw > /tmp/antiad_new.conf")
+        n = sh("wc -l < /tmp/antiad_new.conf 2>/dev/null").strip()
+        if not n.isdigit() or int(n) < 1000:
+            sh("rm -f /tmp/antiad_raw /tmp/antiad_new.conf")
+            return "过滤后条目异常（%s 行），已保留原有 anti-AD 缓存" % (n or "0")
+        sh("mv -f /tmp/antiad_new.conf /tmp/dnsmasq.d/96-antiad.conf; "
+           "gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz.new "
+           "&& mv -f /data/antiad.gz.new /data/antiad.gz; "
+           "rm -f /tmp/antiad_raw; /etc/init.d/dnsmasq restart")
         return "anti-AD 已更新: " + n + " 条"
     if action == "dnsmasq_restart":
         sh("/etc/init.d/dnsmasq restart")
         return "dnsmasq 已重启"
     if action == "cache_set":
-        v = str(int(params.get("size", 1024)))
+        v = str(params.get("size", "")).strip()
+        if not v.isdigit() or not (64 <= int(v) <= 100000):
+            return "缓存大小须为 64-100000 的整数"
+        v = str(int(v))
         sh("uci set dhcp.@dnsmasq[0].cachesize='" + v + "'; uci commit dhcp; /etc/init.d/dnsmasq restart")
         return "DNS 缓存已设为 " + v
     if action == "dns_add":
@@ -449,7 +491,16 @@ def do_action(action, params=None):
         s = params.get("server", "").strip()
         if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s):
             return "无效 IP"
-        sh("sed -i '/server=" + re.escape(s) + "$/d' /tmp/dnsmasq.d/98-upstream.conf; /etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
+        path = "/tmp/dnsmasq.d/98-upstream.conf"
+        cur = sh("cat " + path + " 2>/dev/null").splitlines()
+        keep = [l for l in cur if l.strip() != "server=" + s]
+        if len(keep) == len(cur):
+            return "未找到上游 " + s
+        if not keep:
+            return "至少保留一个上游，否则域名解析会中断"
+        if not sh_write("cat > " + path, "\n".join(keep) + "\n"):
+            return "写入失败"
+        sh("/etc/init.d/dnsmasq restart; cp " + path + " /data/upstreams.conf")
         return "已删除上游 " + s
     if action == "ad_custom_add":
         d = params.get("domain", "").strip().lower()
@@ -461,16 +512,25 @@ def do_action(action, params=None):
         d = params.get("domain", "").strip().lower()
         if not re.match(r"^[a-z0-9\-\.]+$", d):
             return "无效域名"
-        if sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null | grep -c 'address=/" + d + "/0.0.0.0'").strip() == "0":
+        path = "/tmp/dnsmasq.d/97-custom.conf"
+        cur = sh("cat " + path + " 2>/dev/null").splitlines()
+        keep = [l for l in cur if l.strip() != "address=/" + d + "/0.0.0.0"]
+        if len(keep) == len(cur):
             return "未找到屏蔽记录 " + d
-        sh("grep -v 'address=/" + d + "/0.0.0.0' /tmp/dnsmasq.d/97-custom.conf > /tmp/c.tmp; mv /tmp/c.tmp /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
+        if not sh_write("cat > " + path, ("\n".join(keep) + "\n") if keep else ""):
+            return "写入失败"
+        sh("/etc/init.d/dnsmasq restart")
         return "已解除屏蔽 " + d
     if action == "wifi_channel":
         band = params.get("band", "5g")
-        ch = str(params.get("channel", "0"))
+        ch = str(params.get("channel", "0")).strip()
         ifname = "wl1" if band == "2g" else "wl0"
+        if not ch.isdigit():
+            return "信道须为数字"
         if ch == "0":
             return "请选择具体信道（自动模式重启后恢复）"
+        if not (1 <= int(ch) <= 177):
+            return "信道范围 1-177"
         # 注意: 实际函数名是 _set_channel(带下划线), 直接调 iwconfig 更可靠
         sh("iwconfig " + ifname + " channel " + ch)
         return "WiFi " + band + " 信道已即时切换为 " + ch + "（重启后恢复自动）"
@@ -616,15 +676,19 @@ def api_snapshot():
                            "collect_ms": collect_ms}}
 
 
-def get_dns_queries(limit=40):
+def parse_dns_queries(raw, limit=40):
     out = []
-    # 必须先过滤：dnsmasq 每次查询产生 query/forwarded/reply 多行，直接 tail 会被噪音挤占窗口
-    for line in sh("grep -F 'query[' /tmp/dnsquery.log 2>/dev/null | tail -n 120").splitlines():
+    for line in raw.splitlines():
         m = re.search(r"query\[([A-Z0-9]+)\] ([^ ]+) from ([0-9.]+)", line)
         if m:
             out.append({"type": m.group(1), "domain": m.group(2), "ip": m.group(3)})
     out.reverse()
     return out[:limit]
+
+
+def get_dns_queries(limit=40):
+    # 必须先过滤：dnsmasq 每次查询产生 query/forwarded/reply 多行，直接 tail 会被噪音挤占窗口
+    return parse_dns_queries(sh("grep -F 'query[' /tmp/dnsquery.log 2>/dev/null | tail -n 120"), limit)
 
 
 def read_backup(name):

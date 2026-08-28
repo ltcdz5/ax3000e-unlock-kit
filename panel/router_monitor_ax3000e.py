@@ -425,9 +425,15 @@ def do_action(action, params=None):
         sh("/etc/init.d/dnsmasq restart")
         return msg
     if action == "antiad_update":
-        sh("curl -sL 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@main/dnsmasq/light.txt' -o /tmp/dnsmasq.d/hagezi.conf --connect-timeout 15 --max-time 90")
-        n = sh("wc -l /tmp/dnsmasq.d/hagezi.conf 2>/dev/null").split()[0]
-        sh("/etc/init.d/dnsmasq restart")
+        # 下载耗时远超 sh() 默认超时，单独放宽；先落临时文件，校验通过才覆盖生效列表
+        sh("curl -sL 'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@main/dnsmasq/light.txt' "
+           "-o /tmp/hagezi_new.conf --connect-timeout 15 --max-time 90", timeout=100)
+        raw = sh("wc -c < /tmp/hagezi_new.conf 2>/dev/null").strip()
+        n = sh("grep -c '^address=/' /tmp/hagezi_new.conf 2>/dev/null").strip()
+        if not raw.isdigit() or int(raw) < 100000 or not n.isdigit() or int(n) < 1000:
+            sh("rm -f /tmp/hagezi_new.conf")
+            return "下载未完成（%s 字节 / %s 条），已保留原 hagezi 列表" % (raw or "0", n or "0")
+        sh("mv -f /tmp/hagezi_new.conf /tmp/dnsmasq.d/hagezi.conf; /etc/init.d/dnsmasq restart")
         return "hagezi 已更新: " + n + " 条"
     if action == "dnsmasq_restart":
         sh("/etc/init.d/dnsmasq restart")
@@ -457,7 +463,10 @@ def do_action(action, params=None):
         sh("uci set miqos.settings.download='" + str(d) + "'; uci set miqos.settings.upload='" + str(u) + "'; uci commit miqos")
         return "QoS 带宽已设置: 下行 " + str(d) + ", 上行 " + str(u)
     if action == "cache_set":
-        v = str(int(params.get("size", 1024)))
+        v = str(params.get("size", "")).strip()
+        if not v.isdigit() or not (64 <= int(v) <= 100000):
+            return "缓存大小须为 64-100000 的整数"
+        v = str(int(v))
         sh("uci set dhcp.@dnsmasq[0].cachesize='" + v + "'; uci commit dhcp; /etc/init.d/dnsmasq restart")
         return "DNS 缓存已设为 " + v
     if action == "dns_add":
@@ -470,7 +479,16 @@ def do_action(action, params=None):
         s = params.get("server", "").strip()
         if not re.match(r"^\d+\.\d+\.\d+\.\d+$", s):
             return "无效 IP"
-        sh("sed -i '/server=" + re.escape(s) + "$/d' /tmp/dnsmasq.d/98-upstream.conf; /etc/init.d/dnsmasq restart; cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
+        path = "/tmp/dnsmasq.d/98-upstream.conf"
+        cur = sh("cat " + path + " 2>/dev/null").splitlines()
+        keep = [l for l in cur if l.strip() != "server=" + s]
+        if len(keep) == len(cur):
+            return "未找到上游 " + s
+        if not keep:
+            return "至少保留一个上游，否则域名解析会中断"
+        if not sh_write("cat > " + path, "\n".join(keep) + "\n"):
+            return "写入失败"
+        sh("/etc/init.d/dnsmasq restart; cp " + path + " /data/upstreams.conf")
         return "已删除上游 " + s
     if action == "ad_custom_add":
         d = params.get("domain", "").strip().lower()
@@ -482,9 +500,14 @@ def do_action(action, params=None):
         d = params.get("domain", "").strip().lower()
         if not re.match(r"^[a-z0-9\-\.]+$", d):
             return "无效域名"
-        if sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null | grep -c 'address=/" + d + "/0.0.0.0'").strip() == "0":
+        path = "/tmp/dnsmasq.d/97-custom.conf"
+        cur = sh("cat " + path + " 2>/dev/null").splitlines()
+        keep = [l for l in cur if l.strip() != "address=/" + d + "/0.0.0.0"]
+        if len(keep) == len(cur):
             return "未找到屏蔽记录 " + d
-        sh("grep -v 'address=/" + d + "/0.0.0.0' /tmp/dnsmasq.d/97-custom.conf > /tmp/c.tmp; mv /tmp/c.tmp /tmp/dnsmasq.d/97-custom.conf; /etc/init.d/dnsmasq restart")
+        if not sh_write("cat > " + path, ("\n".join(keep) + "\n") if keep else ""):
+            return "写入失败"
+        sh("/etc/init.d/dnsmasq restart")
         return "已解除屏蔽 " + d
     if action == "dhcp_lease":
         v = params.get("lease", "12h")
@@ -515,10 +538,14 @@ def do_action(action, params=None):
         return "无效 ID"
     if action == "wifi_channel":
         band = params.get("band", "5g")
-        ch = str(params.get("channel", "0"))
+        ch = str(params.get("channel", "0")).strip()
         ifname = "wl1" if band == "2g" else "wl0"
+        if not ch.isdigit():
+            return "信道须为数字"
         if ch == "0":
             return "请选择具体信道（自动模式重启后恢复）"
+        if not (1 <= int(ch) <= 177):
+            return "信道范围 1-177"
         # 实际函数名是 _set_channel, 直接调 iwconfig 更可靠
         sh("iwconfig " + ifname + " channel " + ch)
         return "WiFi " + band + " 信道已即时切换为 " + ch + "（重启后恢复自动，如需持久请在小米管理页设置）"
