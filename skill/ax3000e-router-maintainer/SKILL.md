@@ -58,8 +58,14 @@ description: 维护小米 AX3000E（RN07，固件 1.0.24）AP/中继模式路由
 
 - 代码在仓库 `panel/`（router_monitor_ap.py 入口 + monitor_web.py 页面层）；桌面同名 .py 是过时遗留，别改。
 - 参数走环境变量：`ROUTER_HOST` / `ROUTER_PASSWD` / `ROUTER_USER` / `ROUTER_SSH_PORT`。
-- 改完跑 `python -m py_compile` + 实际启动访问 `/api`；提 PR 前注意 `requirements.txt` 的 paramiko<4 不许动。
+- 改完跑 `python -m py_compile` + `pytest tests -q` + 实际启动访问 `/api`；提 PR 前注意 `requirements.txt` 的 paramiko<4 不许动。
 - 采集节奏：默认 3s 一次、单条合并 SSH 命令（别拆成多次往返，机器只有 2 核）。
+
+## 任务：发版后的同步（每次 release 固定三步）
+
+1. `tr -d '\r' < repo/router/auto_ssh.sh | md5sum` 对比路由器 `md5sum /data/auto_ssh/auto_ssh.sh`——不一致先备份 live 再上传覆盖，`sh -n` 验语法；
+2. 面板 .py 有变更 → **必须重启面板进程**（进程有代码缓存，仅 HTML 模板热加载）；
+3. 复核：8787 端口存活、`df /data` 正常、广告域名劫持 `0.0.0.0`。
 
 ## 已确认结论（别重复踩）
 
