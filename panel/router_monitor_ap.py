@@ -67,10 +67,29 @@ def sh(cmd, timeout=10):
         return ""
 
 
-def sh_write(cmd, data, timeout=15):
-    """执行命令并通过 stdin 写入数据(避免命令行拼接的引号/注入问题)，成功返回 True"""
+def _sh_nolock(cmd, timeout=10):
+    """仅供 ssh_lock 持有期间使用：直接执行并返回 stdout（不获取锁，防死锁）"""
     global ssh_client
+    try:
+        if ssh_client is None or not ssh_client.get_transport() or not ssh_client.get_transport().is_active():
+            ssh_client = ssh_connect()
+        _, stdout, _ = ssh_client.exec_command(cmd, timeout=timeout)
+        return stdout.read().decode("utf-8", "replace").strip()
+    except Exception:
+        return ""
+
+
+def sh_write(cmd, data, timeout=15):
+    """执行命令并通过 stdin 写入数据；写后回读字节数校验（关键防线：/data 卷满时
+    截断重定向会"成功"但内容静默丢失，曾把 crontab 清成 0 字节）。校验不过返回 False"""
+    global ssh_client
+    wm = re.match(r"cat\s*(>>?)\s*(\S+)", cmd.strip())
+    path, mode = (wm.group(2), wm.group(1)) if wm else (None, None)
+    nbytes = len(data.encode("utf-8"))
     with ssh_lock:
+        before = ""
+        if path and mode == ">>":
+            before = _sh_nolock("wc -c < %s 2>/dev/null" % path)
         for _ in range(2):
             sent = False
             try:
@@ -81,7 +100,14 @@ def sh_write(cmd, data, timeout=15):
                 stdin.write(data)
                 stdin.channel.shutdown_write()
                 stdout.read()
-                return True
+                if not path:
+                    return True
+                after = _sh_nolock("wc -c < %s 2>/dev/null" % path)
+                if not after.isdigit():
+                    return False
+                if mode == ">>":
+                    return int(after) >= (int(before) if before.isdigit() else 0)
+                return int(after) == nbytes
             except Exception:
                 if sent:
                     break
