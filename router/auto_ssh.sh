@@ -74,8 +74,9 @@ refresh_antiad() {
         return 1
     fi
     mv -f /tmp/antiad_new /tmp/dnsmasq.d/96-antiad.conf
-    gzip -c /tmp/dnsmasq.d/96-antiad.conf > /data/antiad.gz.new 2>/dev/null \
-        && mv -f /data/antiad.gz.new /data/antiad.gz
+    # /data 仅 1.7MB：禁止 .new 双份落盘（会撑爆卷），先 /tmp 暂存再删旧写新
+    gzip -c /tmp/dnsmasq.d/96-antiad.conf > /tmp/antiad_new.gz 2>/dev/null \
+        && { rm -f /data/antiad.gz; cat /tmp/antiad_new.gz > /data/antiad.gz; rm -f /tmp/antiad_new.gz; }
     logger -t auto_ssh "anti-AD refreshed: $(wc -l < /tmp/dnsmasq.d/96-antiad.conf)"
 }
 
@@ -94,8 +95,8 @@ refresh_awavenue() {
         return 1
     fi
     mv -f /tmp/awv_new /tmp/dnsmasq.d/90-awavenue.conf
-    gzip -c /tmp/dnsmasq.d/90-awavenue.conf > /data/awavenue.gz.new 2>/dev/null \
-        && mv -f /data/awavenue.gz.new /data/awavenue.gz
+    gzip -c /tmp/dnsmasq.d/90-awavenue.conf > /tmp/awavenue_new.gz 2>/dev/null \
+        && { rm -f /data/awavenue.gz; cat /tmp/awavenue_new.gz > /data/awavenue.gz; rm -f /tmp/awavenue_new.gz; }
     logger -t auto_ssh "AWAvenue refreshed: $(wc -l < /tmp/dnsmasq.d/90-awavenue.conf)"
 }
 
