@@ -107,15 +107,18 @@ function V(id){var el=document.getElementById(id);return el?el.value.trim():'';}
 var CFG=null,cfgBusy=false;
 function refreshCfg(){
  if(cfgBusy)return;cfgBusy=true;
- fetch('/api/config').then(function(r){return r.json();}).then(function(d){CFG=d;renderCfg(d);}).catch(function(){}).finally(function(){cfgBusy=false;});
+ fetch('/api/config').then(function(r){return r.json();}).then(function(d){CFG=d;renderCfg(d);})
+ .catch(function(){var g=document.getElementById('cfg-grid');if(g)g.innerHTML='<div class="cfg-panel"><h3>⚠️ 配置加载失败</h3><div class="desc">SSH 连接失败、路由器重启中或密码已更改。<a href="javascript:refreshCfg()" style="color:var(--acc)">点击重试</a>；若持续失败请看 <b>docs/自救手册.md</b>。</div></div>';})
+ .finally(function(){cfgBusy=false;});
 }
 function doAct(a,p,cf){
- var real={};
+ var real={},missing=null;
  Object.keys(p||{}).forEach(function(k){
   var v=p[k];
-  if(typeof v==='string'&&v.charAt(0)==='@'){var val=V(v.slice(1));if(!val){showMsg('请先填写：'+k);return;}real[k]=val;}
+  if(typeof v==='string'&&v.charAt(0)==='@'){var val=V(v.slice(1));if(!val){missing=missing||('请先填写：'+k);}else{real[k]=val;}}
   else real[k]=v;
  });
+ if(missing){showMsg('❌ '+missing);return;}
  if(a==='cache_save'){a='cache_set';real={size:V('cache-size')};}
  if(a==='led_save'){a='led_schedule';real={on:V('led-on'),off:V('led-off')};}
  if(a==='cron_add'){real={schedule:V('cron-sched'),command:V('cron-cmd')};}
@@ -183,8 +186,10 @@ function renderCfg(c){
         inpRow(['2.4G',sel('g-pw',[28,24,20,16,12],w.g_power||28),B('wifi_power','设2.4G功率',{band:'2g',power:'@g-pw'},'','')])}));
  var devs=(c.devices||[]).map(function(x){return item('<span class="val">'+E(x.host||'')+'</span>','<span class="val">'+E(x.ip)+'</span><span style="color:#7d8896">'+E(x.mac)+'</span><span class="'+(x.state==='REACHABLE'?'ok':'warn')+'">'+E(x.state)+'</span>');});
  h.push(card({title:'在线设备',badge:(c.devices||[]).length+' 台',tip:'实时 ARP 邻居表。DHCP 由上级路由分配，主机名仅在有租约时显示。',body:lst(devs,'暂无设备')}));
- h.push(card({title:'DNS 查询记录 <span class="badge on">实时</span>',tip:'各设备最近 DNS 查询（每 3 秒刷新）。日志超 300KB 自动清空。',
-  desc:'<span id="dq-count">最近 0 条查询</span>',body:'<div class="list" id="dq-list"></div>'}));
+ h.push(card({title:'DNS 查询记录 <span class="badge on">实时</span>',tip:'各设备最近 DNS 查询（每 3 秒刷新）。日志超 300KB 自动清空。不查记录时可关闭日志，降低 dnsmasq CPU 开销（持久生效）。',
+  desc:'<span id="dq-count">最近 0 条查询</span>',body:'<div class="list" id="dq-list"></div>',
+  row:B('log_toggle',(c.log_queries?'关闭查询日志':'开启查询日志'),{},(c.log_queries?'关闭后 dnsmasq 不再记录查询，降低 CPU 开销；面板查询记录将暂停更新。确认？':'开启后恢复查询记录（写入 tmpfs，不耗闪存）。确认？'),'gray')}));
+ if(c.log_queries===false){h.push('<div class="tip" style="border-left-color:var(--warn)">⚠️ DNS 查询日志当前处于关闭状态，下方查询记录为关闭前残留。</div>');}
  var crons=(c.cron_tasks||[]).map(function(t){if(t.indexOf('led_ctl')>=0){return item('<span class="val">'+E(t)+'</span>','<span style="color:#7d8896;font-size:11px">由 LED 面板管理</span>');}return item('<span class="val">'+E(t)+'</span>',B('cron_del','删',{line:t},'删除该任务？','red'));});
  h.push(card({title:'定时任务',tip:'格式: 分 时 日 月 周 + 命令。例 "0 4 * * *" + reboot = 每天4点重启。真实写入 crontab，重启后仍生效。',
   body:inpRow([inp('cron-sched','如 0 4 * * *'),inp('cron-cmd','命令 如 reboot','180px'),B('cron_add','添加',{},'','')])+lst(crons,'暂无面板定时任务')}));

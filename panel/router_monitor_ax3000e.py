@@ -823,7 +823,6 @@ function switchTab(t){
  document.getElementById('tb-mon').className='tab'+(t==='mon'?' active':'');
  document.getElementById('tb-cfg').className='tab'+(t==='cfg'?' active':'');
 
-function showUrlMsg(){var q=location.search.match(/[?&]msg=([^&]+)/);if(q){showMsg(decodeURIComponent(q[1]));}}
 }
 function showMsg(t){var m=document.getElementById('msg');m.textContent=t;m.style.display='block';setTimeout(function(){m.style.display='none';},3000);}
 function initCanvas(id){var cv=document.getElementById(id),dpr=window.devicePixelRatio||1;cv.width=560*dpr;cv.height=150*dpr;cv.style.width='100%';cv.style.height='150px';return cv;}
@@ -871,7 +870,7 @@ function refresh(){
  }).catch(function(){});
 }
 setInterval(refresh,2000);refresh();
-setTimeout(showUrlMsg,300);
+setTimeout(function(){showMsg('✅ 已连接');},300);
 
 function badge(on){return '<span class="badge '+(on?'on':'off')+'">'+(on?'已开':'已关')+'</span>';}
 function tip(t){return '<div class="tip">💡 建议：'+t+'</div>';}
@@ -1000,9 +999,11 @@ function loadCfg(retry){
  fetch('/api/config').then(function(r){return r.json();}).then(function(d){renderCfgBody(d);}).catch(function(){if(retry<3){setTimeout(function(){loadCfg(retry+1);},2000);}else{document.getElementById('cfg-grid').textContent='加载失败，请检查连接（已重试3次）';}});
 }
 function post(body){
- var f=document.createElement('form');f.method='POST';f.action='/api/act';
- var inp=document.createElement('input');inp.type='hidden';inp.name='json';
- inp.value=JSON.stringify(body);f.appendChild(inp);document.body.appendChild(f);f.submit();
+ fetch('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+ .then(function(r){return r.json();}).then(function(d){
+  showMsg(d.ok?('✅ '+d.msg):('❌ '+(d.error||'失败')));
+  if(d.ok)loadCfg(0);
+ }).catch(function(){showMsg('操作失败：连接中断');});
 }
 </script></body></html>
 """
@@ -1025,17 +1026,13 @@ def api_snapshot():
 
 
 def _page():
-    """每请求渲染主页：拉配置 → 注入 HTML 与内联 JSON（尖括号逃逸防截断）。"""
+    """每请求渲染主页：读模板 + 注入内联 JSON（尖括号逃逸防截断）。配置由前端 fetch 渲染。"""
     try:
         cfg = get_config()
-        cfg_html = render_config_html(cfg)
         cfg_json = monitor_web.escape_inline_json(json.dumps(cfg, ensure_ascii=False))
-    except Exception as e:
-        cfg_html = ('<div class="cfg-grid"><div class="cfg-panel"><h3>错误</h3>'
-                    '<div class="desc">' + esc(str(e)) + '</div></div></div>')
+    except Exception:
         cfg_json = "{}"
-    body = PAGE.replace("%HOST%", HOST).replace(
-        '<div class="cfg-grid" id="cfg-grid">加载中...</div>', cfg_html)
+    body = PAGE.replace("%HOST%", HOST)
     body = body.replace("<script>", "<script>window.__CFG__=" + cfg_json + ";", 1)
     return body.encode("utf-8")
 

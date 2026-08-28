@@ -1,5 +1,6 @@
 #!/bin/sh
-# auto_ssh.sh v5 (2026-08-28) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
+# auto_ssh.sh v6 (2026-08-28) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
+# v6: anti-AD 列表 NXDOMAIN 化（0.0.0.0/空地址 → /#，客户端直接放弃不重试，降低查询量）
 # 由 firewall include 触发（每次防火墙重载都会跑），所以必须毫秒级返回。
 # v5: 去广告改为 anti-AD(主) + AWAvenue(国内补充) 双列表，缓存超 48h 自动联网刷新，
 #     并补一条每日 refresh 定时任务；下载不达标绝不覆盖在用的好列表。
@@ -74,6 +75,8 @@ refresh_antiad() {
         return 1
     fi
     mv -f /tmp/antiad_new /tmp/dnsmasq.d/96-antiad.conf
+    # NXDOMAIN 化：0.0.0.0/空地址 → /#（客户端直接放弃，不再重试 AAAA/换协议，降低查询量）
+    sed -i -E '/^address=\// { s|/0\.0\.0\.0$|/#|; s|/$|/#| }' /tmp/dnsmasq.d/96-antiad.conf
     # /data 仅 1.7MB：禁止 .new 双份落盘（会撑爆卷），先 /tmp 暂存再删旧写新
     gzip -c /tmp/dnsmasq.d/96-antiad.conf > /tmp/antiad_new.gz 2>/dev/null \
         && { rm -f /data/antiad.gz; cat /tmp/antiad_new.gz > /data/antiad.gz; rm -f /tmp/antiad_new.gz; }

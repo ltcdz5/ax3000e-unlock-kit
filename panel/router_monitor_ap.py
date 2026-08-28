@@ -431,6 +431,7 @@ def get_config():
     cfg["adblock_domestic_age_d"] = age(19)
     cfg["adblock_antiad_age_d"] = age(20)
     cfg["adblock_enabled"] = "ADOFF" not in parts[4]
+    cfg["log_queries"] = "93-logqueries" in parts[4]
     cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip()
                              for l in parts[5].splitlines() if l.startswith("address=/")]
     cfg["ssh"] = "dropbear" in parts[6]
@@ -619,6 +620,8 @@ def update_antiad():
         sh("rm -f /tmp/antiad_raw")
         return "下载未完成（%s 字节），已保留原有 anti-AD 缓存" % (raw or "0")
     sh("grep -vE '" + AD_SKIP + "' /tmp/antiad_raw > /tmp/antiad_new.conf")
+    # NXDOMAIN 化：0.0.0.0/空地址 → /#（客户端直接放弃，不再重试 AAAA/换协议，降低查询量）
+    sh("sed -i -E '/^address=\\// { s|/0\\.0\\.0\\.0$|/#|; s|/$|/#| }' /tmp/antiad_new.conf")
     n = sh("wc -l < /tmp/antiad_new.conf 2>/dev/null").strip()
     if not n.isdigit() or int(n) < 1000:
         sh("rm -f /tmp/antiad_raw /tmp/antiad_new.conf")
@@ -683,6 +686,13 @@ def do_action(action, params=None):
     if action == "dnsmasq_restart":
         sh("/etc/init.d/dnsmasq restart")
         return "dnsmasq 已重启"
+    if action == "log_toggle":
+        if sh("test -f /tmp/dnsmasq.d/93-logqueries.conf && echo y") == "y":
+            sh("rm -f /tmp/dnsmasq.d/93-logqueries.conf /data/logqueries.conf; /etc/init.d/dnsmasq restart")
+            return "DNS 查询日志已关闭（持久生效，重启后仍关闭；dnsmasq CPU 负担降低）"
+        sh("printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /data/logqueries.conf; "
+           "cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; /etc/init.d/dnsmasq restart")
+        return "DNS 查询日志已开启（写入 tmpfs /tmp/dnsquery.log，不耗闪存）"
     if action == "cache_set":
         v = str(params.get("size", "")).strip()
         if not v.isdigit() or not (64 <= int(v) <= 100000):
