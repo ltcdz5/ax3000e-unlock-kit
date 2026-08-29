@@ -3,6 +3,39 @@
 > 完整版本历史（与 GitHub Releases 同步；离线查阅用）。最新在上。
 > 发版惯例：大改升主版本号；小修原地更新最新 release（含 zip 资产 `--clobber` 与 SHA256SUMS）。
 
+## v4.0.0 · 新手三件套 + 设备识别 + 预适配矩阵 + 发布自动化
+
+> Tag: `v4.0.0` · 2026-08-30
+
+### 新工具（新手友好）
+
+- **解锁向导** `tools/unlock_wizard.py`（tkinter GUI / 命令行双前端）：输 IP+管理页密码全自动——MiWiFi 登录算法取 stok（sha256 模式真机验证）→ start_binding 注入 → 验 22 口 → 一键接力部署；已解锁设备注入被拒（1541）有专门提示分支；subprocess 无 shell + 主机名校验
+- **一键体检** `tools/kit_doctor.py` + `一键体检.bat`：零凭据局域网指纹扫描自动发现路由器 IP；固件/SSH/自愈/去广告//data 容量/云服务/弱密码/面板逐项体检；`--fix` 自动改写启动器 IP；主路由模式功能分支（WAN/UPnP/QoS/DHCP 绑定/端口转发）；结尾汇总"必须手动"待办
+- **实机校准探针** `deploy/device_probe.py`：只读单连接输出设备画像，BE3600 到手后的校准入口
+
+### 新架构
+
+- `panel/device_profile.py` 设备识别解耦模块：机型能力表（`nvram get model`，RN07=AX3000E）+ 纯解析 + sh 注入；双面板接入、页脚显示套件版本号；未验证机型功能键不盲开
+
+### 预适配矩阵
+
+- `docs/BE3600-解锁与适配指南.md`：版本兼容矩阵（v1.0.87 需断电降级）、解锁方法 A/B/C、套件移植清单
+- `docs/Mesh拓扑适配笔记.md`：无线/有线回程角色分工，去广告挂主节点、子节点分流自愈
+
+### 工程与可信度
+
+- GitHub Actions 双流水线：`ci.yml`（py_compile + sh -n + pytest）与 `release-latest.yml`（**小更新通道**：push 到 main 自动重建 zip+SHA256SUMS 覆盖上传最新 release）
+- README 重写：适配设备表（≤1.0.24 版本策略）、"不是刷机项目"边界、双模式启动器平权、AI 辅助生成声明、CI/release/license 徽章
+- `CHANGELOG.md` 全版本汇编；`SHA256SUMS.txt` 资产（zip 经 git archive 可逐字节复现）；Issue 模板（兼容性反馈/bug）；`panel/README.md` 目录说明
+- 仓库更名 `xiaomi-router-unlock-kit`（旧地址自动重定向）；描述与 14 个 topics 补齐搜索缺口
+
+### 依赖与修正
+
+- paramiko 放宽 `<5,>=3`：4.0.0 真机连接/22 项测试/面板端到端全验证（5.0 才删 ssh-rsa）
+- DNS 上游兜底池对齐实测结论（去 4.2.2.2，换百度 180.76.76.76）
+- 实测结论入档：start_binding 对已解锁设备拒绝重复注入（1541），注入链仅锁定首解有效
+- 卫生清理：LICENSE/SKILL 旧名、个人用户名路径、个人发版脚本移入 tools/
+
 ## v3.1.0 · DNS 日志开关 + NXDOMAIN 化 + 前端交互统一
 
 > Tag: `v3.1.0` · 2026-08-28

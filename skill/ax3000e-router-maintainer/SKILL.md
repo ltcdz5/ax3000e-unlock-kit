@@ -34,7 +34,7 @@ description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 
 | 内存/存储 | 186MB RAM / /data 1.7MB UBIFS（当前 81%） |
 | 依赖 | Python 3.12 + paramiko 3.5.x；Git Bash 环境；**push 需梯子**（端口会漂，读注册表 ProxyServer 或探测 7890/7892） |
 
-## 架构现状（v3.1.0）
+## 架构现状（v4.0.0）
 
 - `panel/monitor_web.py` = **双面板唯一 HTTP 服务层**：认证（HTTP Basic + hmac）、Host 回环校验、Origin 同源校验、路由。纯函数 `host_ok/origin_ok/auth_ok/escape_inline_json/parse_act_body` 可单测。
 - `panel/device_profile.py` = **设备识别解耦模块**：机型能力表（key = `nvram get model`，AX3000E=RN07）+ 纯解析函数；面板注入自己的 sh 采集。新机型只加表一行，不改面板；未验证机型功能键不得盲开。配套只读探针 `deploy/device_probe.py`（新设备实机校准用）。
