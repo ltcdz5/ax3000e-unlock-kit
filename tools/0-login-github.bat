@@ -1,5 +1,5 @@
 @echo off
-rem ===== STEP 0: GitHub browser login - double click me FIRST =====
+rem ===== 维护者自用脚本（普通用户无需理会）：GitHub 浏览器登录 =====
 cd /d "%USERPROFILE%\ax3000e-unlock-kit"
 
 gh auth login --hostname github.com --git-protocol https --web

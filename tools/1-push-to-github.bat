@@ -1,5 +1,5 @@
 @echo off
-rem ===== STEP 1: create public repo + push (run AFTER 0-login succeeded) =====
+rem ===== 维护者自用脚本（普通用户无需理会）：建仓/推送，需先跑 0-login =====
 setlocal
 cd /d "%USERPROFILE%\ax3000e-unlock-kit"
 
