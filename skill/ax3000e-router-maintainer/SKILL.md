@@ -38,10 +38,12 @@ description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 
 
 - `panel/monitor_web.py` = **双面板唯一 HTTP 服务层**：认证（HTTP Basic + hmac）、Host 回环校验、Origin 同源校验、路由。纯函数 `host_ok/origin_ok/auth_ok/escape_inline_json/parse_act_body` 可单测。
 - `panel/device_profile.py` = **设备识别解耦模块**：机型能力表（key = `nvram get model`，AX3000E=RN07）+ 纯解析函数；面板注入自己的 sh 采集。新机型只加表一行，不改面板；未验证机型功能键不得盲开。配套只读探针 `deploy/device_probe.py`（新设备实机校准用）。
+- `tools/unlock_wizard.py` = **解锁向导**（tkinter GUI/CLI 双前端）：自动登录取 stok → 注入 → 验 22 口 → 接力部署；已解锁设备注入被拒（1541）有专门提示分支。
+- `tools/kit_doctor.py` + `一键体检.bat` = **一键体检**：零凭据局域网指纹扫描发现路由器 IP、逐项状态体检、`--fix` 自动改写启动器 IP、汇总手动待办；含主路由模式功能分支。
 - AP 面板：`router_monitor_ap.py`（业务）+ `monitor_page.html`（前端，fetch+toast+refreshCfg 模式）。
 - 主面板：`router_monitor_ax3000e.py`——已删自有 Handler/认证（v3.0），`_page()` 服务端**零 SSH**（GET / 1.8ms），前端 JS 全 fetch。**不要复活** form/302/?msg= 与 `render_config_html`（已删除）。
 - `tests/test_security.py` 21 项本地单测（不连路由器）；CI sanity = py_compile + sh -n + pytest。
-- **发版流程**：改码 → 本地 pytest → commit → **机主审核通过** → push → 重建 zip + release（附 zip 与 auto_ssh.sh 资产）→ 三步同步（见下）。
+- **发版流程**：改码 → 本地 pytest → commit → push。**双通道**：① 小更新走 CI 自动通道——`.github/workflows/release-latest.yml` 在每次 push 到 main 时重建 zip+SHA256SUMS 并覆盖上传到最新 release（原地更新，无需手动）；② 大版本手动：机主审核通过 → `gh release create vX.Y.Z`（新 tag）→ 改 `KIT_VERSION` → 三步同步（见下）。
 
 ## DNS 体系现状与结论
 

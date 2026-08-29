@@ -1,0 +1,31 @@
+name: release-latest
+
+# 小更新通道：push 到 main 即自动重建 zip + SHA256SUMS，覆盖上传到最新 release（原地更新）。
+# 大版本（新 tag）仍走手动发版流程，见 SKILL「任务：发版」。
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible assets
+        run: |
+          TAG=$(gh release view --json tagName --jq .tagName)
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          git archive --format=zip -o "xiaomi-router-unlock-kit-$TAG.zip" HEAD --prefix=xiaomi-router-unlock-kit/
+          sha256sum "xiaomi-router-unlock-kit-$TAG.zip" router/auto_ssh.sh > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Upload (clobber) to latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" "xiaomi-router-unlock-kit-$TAG.zip" router/auto_ssh.sh SHA256SUMS.txt --clobber
+          gh release delete-asset "$TAG" ax3000e-unlock-kit-v3.1.0.zip --yes 2>/dev/null || true
