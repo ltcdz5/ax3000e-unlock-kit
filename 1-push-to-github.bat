@@ -27,13 +27,13 @@ if not exist .git (
 git commit -m "initial kit" --allow-empty-message >nul 2>&1
 
 echo [i] creating repo and pushing...
-gh repo view ax3000e-unlock-kit >nul 2>nul
+gh repo view xiaomi-router-unlock-kit >nul 2>nul
 if errorlevel 1 (
-    gh repo create ax3000e-unlock-kit --public --source . --push
+    gh repo create xiaomi-router-unlock-kit --public --source . --push
 ) else (
     git push -u origin main
 )
 
 echo ============================================
-if defined GHUSER echo [ok] https://github.com/%GHUSER%/ax3000e-unlock-kit
+if defined GHUSER echo [ok] https://github.com/%GHUSER%/xiaomi-router-unlock-kit
 pause

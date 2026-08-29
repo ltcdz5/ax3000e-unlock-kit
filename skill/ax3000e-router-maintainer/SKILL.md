@@ -5,7 +5,7 @@ description: 维护小米 AX3000E（RN07，固件 1.0.24）AP/中继模式路由
 
 # AX3000E 路由器维护 Skill（2026-08-29 00:4x 更新至 v3.1.0 后状态）
 
-配套仓库：https://github.com/ltcdz5/ax3000e-unlock-kit（代码权威来源，本地克隆 `C:\Users\xutengfa\ax3000e-unlock-kit`）
+配套仓库：https://github.com/ltcdz5/xiaomi-router-unlock-kit（代码权威来源，本地克隆 `C:\Users\xutengfa\ax3000e-unlock-kit`）
 配套文档：仓库 `docs/自救手册.md`；桌面 `路由器聊天记录-完整导出-20260828.md`（历史）；桌面 `面板交接-剩余任务-20260828.md`（已基本清完，可当验证清单）
 备份机：BE3600 2.5G 另有一套独立存档 `Desktop\路由器配置存档-20260827\BE3600-降级开SSH方法存档-20260829.md`，与本项目无关，勿混。
 
