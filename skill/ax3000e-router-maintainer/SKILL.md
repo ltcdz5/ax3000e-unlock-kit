@@ -82,6 +82,7 @@ description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 
 ## 已确认结论（别重复踩/别重复试）
 
 - arn_switch 假接口；start_binding 真注入点；/etc 是 ramfs，重启清零，全靠三层自愈。
+- **start_binding 对已解锁设备拒绝重复注入**（code=1541 且不执行，2026-08-30 实测，浏览器/API 两种 stok 一致）；注入链只用于锁定设备首解。排查"解锁不生效"时先确认设备是否本就解锁。
 - /data/etc（~920K）是 /etc/config、crontabs 的**活体 bind-mount 载体，不可清理**（曾被误判为备份堆积）。
 - K2P 的 DNS 已指向本机（全屋去广告生效）；ipset 阻断在中继模式不适用（阻断点在上游网关）；WiFi 后台扫描无公开开关（QCA 闭源）。
 - 抖音系 DNS 定向（95-bytedance.conf）**已废弃且复活载体全部删除（机主令 2026-08-29，永不再启）**：字节自家 DNS 对自家域名无优势 + 180.184.1.1 有多秒停顿。

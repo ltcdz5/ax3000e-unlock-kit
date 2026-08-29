@@ -48,7 +48,9 @@ tools/    0-login / 1-push .bat       维护者自用发版脚本（普通用户
 
 ### 1 · 解锁 SSH（不丢配置）
 
-浏览器登录管理页，从地址栏复制 `;stok=` 后面的字符串，替换 `<IP>`/`<STOK>` 后逐条执行：
+**新手路径**：`python tools/unlock_wizard.py`——输 IP 和管理页密码自动完成登录、注入、验口，成功后可一键接力部署（无图形环境自动转命令行交互）。
+
+**手动路径**：浏览器登录管理页，从地址栏复制 `;stok=` 后面的字符串，替换 `<IP>`/`<STOK>` 后逐条执行：
 
 ```powershell
 $B="http://<IP>/cgi-bin/luci/;stok=<STOK>/api/xqsystem/start_binding"
@@ -62,6 +64,7 @@ curl.exe -X POST $B -d "uid=1234&key=1234'%0A%2Fetc%2Finit.d%2Fdropbear%20start'
 `Test-NetConnection <IP> -Port 22` 应为 True。
 
 ⚠️ 网上常见的 `api/misystem/arn_switch` 在 RN07 上是**假接口**——返回 `{"code":0}` 但不执行任何命令，请认准上面的 `xqsystem/start_binding`。
+ℹ️ 注入链只对**锁定状态**设备的首次解锁生效；已解锁设备重跑会返回 `code:1541` 且不执行（2026-08-30 实测，浏览器/API 两种 stok 均如此），无副作用，直接进第 2 步即可。
 
 ### 2 · 改密码 & 固化自愈
 
