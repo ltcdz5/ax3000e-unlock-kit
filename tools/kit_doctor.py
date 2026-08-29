@@ -140,6 +140,23 @@ def main():
             if pw_admin:
                 say("⚠️", "SSH 仍是弱密码 admin", "手动：ssh 登录后 passwd 修改，并同步启动器 ROUTER_PASSWD")
                 MANUAL.append("改 SSH 弱密码 admin 并同步启动器")
+            # 模式分支（与 deploy/oneclick_deploy.py 同款判断）
+            gw = ssh_exec(ip, "ip route show default 2>/dev/null | grep -o 'via [0-9.]*' | head -1", A.passwd)
+            if gw:
+                say("ℹ️", "当前模式：AP/中继（上级网关 %s）" % gw.replace("via ", ""),
+                    "端口转发/QoS/DHCP 由上级路由管理；切主路由模式后重跑体检可查下列功能")
+            else:
+                say("✅", "当前模式：主路由")
+                wan = ssh_exec(ip, "ip route show default | wc -l", A.passwd)
+                say("✅" if wan.strip() != "0" else "❌", "WAN 链路" + ("已连通" if wan.strip() != "0" else "无默认路由，检查拨号/上级光猫"))
+                upnp = ssh_exec(ip, "ps w | grep miniupnpd | grep -v grep | wc -l", A.passwd)
+                say("✅" if upnp.strip() != "0" else "ℹ️", "UPnP " + ("运行中" if upnp.strip() != "0" else "未运行（面板可开关）"))
+                qos = ssh_exec(ip, "uci get miqos.settings.enabled 2>/dev/null", A.passwd)
+                say("✅" if qos == "1" else "ℹ️", "QoS " + ("已启用" if qos == "1" else "未启用（面板可配置）"))
+                binds = ssh_exec(ip, "uci show dhcp 2>/dev/null | grep -c 'dhcp.@host'", A.passwd)
+                say("✅", "DHCP 静态绑定 %s 条" % (binds or 0), "面板可增删" if (binds or "0") != "0" else "")
+                fwds = ssh_exec(ip, "uci show firewall 2>/dev/null | grep -c '@redirect'", A.passwd)
+                say("✅", "端口转发规则 %s 条" % (fwds or 0), "面板可增删" if (fwds or "0") != "0" else "")
         except Exception as e:
             say("⚠️", "SSH 登录失败（密码不是 %s？）" % A.passwd, "用 --passwd 指定；手动：改密码后同步启动器")
             MANUAL.append("确认 SSH 密码并同步启动器 ROUTER_PASSWD")
