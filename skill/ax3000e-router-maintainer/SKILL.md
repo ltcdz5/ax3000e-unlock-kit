@@ -1,12 +1,13 @@
 ---
 name: ax3000e-router-maintainer
-description: 维护小米 AX3000E（RN07，固件 1.0.24）AP/中继模式路由器的操作技能——SSH 连接与自救、三层自愈、DNS/去广告体系、双面板架构（v3.1 共享服务层）、发版与同步流程。接手该设备维护、排查"SSH 失效/面板异常/DNS 问题"时使用。
+description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 ax3000e-unlock-kit）的操作技能——AX3000E（RN07，固件 1.0.24）SSH 连接与自救、三层自愈、DNS/去广告体系、双面板架构（v3.1 共享服务层）、发版与同步流程；含 BE3600 预适配与小米 Mesh 预设计文档。接手设备维护、排查"SSH 失效/面板异常/DNS 问题"或推进新设备适配时使用。
 ---
 
 # AX3000E 路由器维护 Skill（2026-08-29 00:4x 更新至 v3.1.0 后状态）
 
 配套仓库：https://github.com/ltcdz5/xiaomi-router-unlock-kit（代码权威来源，本地克隆 `C:\Users\xutengfa\ax3000e-unlock-kit`）
 配套文档：仓库 `docs/自救手册.md`；桌面 `路由器聊天记录-完整导出-20260828.md`（历史）；桌面 `面板交接-剩余任务-20260828.md`（已基本清完，可当验证清单）
+预适配文档（仓库 `docs/`）：`BE3600-解锁与适配指南.md`（解锁方法 A/B/C + 套件移植清单，待实机）、`Mesh拓扑适配笔记.md`（去广告挂主节点、子节点分流自愈，预设计）
 备份机：BE3600 2.5G 另有一套独立存档 `Desktop\路由器配置存档-20260827\BE3600-降级开SSH方法存档-20260829.md`，与本项目无关，勿混。
 
 ## 铁律（违反必出事故）
@@ -74,7 +75,7 @@ description: 维护小米 AX3000E（RN07，固件 1.0.24）AP/中继模式路由
 
 1. commit → push（梯子！端口读注册表 ProxyServer）→ 机主已批准才 `gh release create vX.Y.Z`（zip 用 `git archive` 从 HEAD 构建 + auto_ssh.sh 单件资产）。
 2. **发版三步同步**：① `tr -d '\r' < repo/router/auto_ssh.sh | md5sum` vs 路由器 live md5（**live 路径 = `/data/auto_ssh/auto_ssh.sh`**，不是 `/data/auto_ssh.sh`），不一致先备份 live（.bak_vX）再上传+`sh -n`+install；② 面板 .py 变了重启进程；③ 复核 8787 存活 / df /data / 广告域名劫持。
-3. 版本惯例：大改主版本号，小修就地编辑最新 release 说明；zip 资产用 `--clobber` 跟随 HEAD。
+3. 版本惯例：大改主版本号，小修就地编辑最新 release 说明；zip 资产用 `--clobber` 跟随 HEAD（资产名随仓库更名：`xiaomi-router-unlock-kit-vX.Y.Z.zip`，旧的 `ax3000e-unlock-kit-*.zip` 在下次发版时替换）。
 
 ## 已确认结论（别重复踩/别重复试）
 
