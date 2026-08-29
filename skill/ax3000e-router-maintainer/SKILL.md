@@ -14,7 +14,7 @@ description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 
 
 1. **禁止升级固件**，锁 1.0.24。升级=解锁与自愈全部报废。
 2. **写路由器任何东西前先 `df /data`**。/etc/crontabs 与 /data 同在一个 1.7MB UBIFS 卷，卷满时截断"成功"但写入静默失败（crontab 曾被清空事故根因）。写文件用 base64 单命令注入或带字节回读校验的 sh_write（范本：`restore_crontab*.py`、面板 `sh_write`）。大文件（anti-AD ~780K）禁止 .new 双份落盘——先 /tmp 暂存、删旧、cat 写新。
-3. **paramiko 锁 <4**（5.x 删 ssh-rsa，本机 dropbear 2017.75 只认它），连接必须带 `disabled_algorithms={'keys': ['rsa-sha2-256','rsa-sha2-512']}`。
+3. **paramiko 锁 <5**（5.0 删 ssh-rsa，本机 dropbear 2017.75 只认它；3.x/4.x 实测均可），连接必须带 `disabled_algorithms={'keys': ['rsa-sha2-256','rsa-sha2-512']}`。
 4. **无 SFTP**——文件传输走 SSH exec + base64/tr。
 5. **dropbear 有连接限流**：短时间内连续新建 SSH 连接会被拒 banner（"Error reading SSH protocol banner"）。脚本验证一律复用单连接（可 monkeypatch 面板模块的 `sh` 到已建连接）；操作间隔 ≥20-30s；被限流等 60-90s 自愈。
 6. **对路由器的"成功"要自校验**：sh() 失败静默返回空串，曾导致 UI 谎报"已开启"而实际什么都没执行。写类动作必须回读断言（如 log_toggle 的 `test -f ... || echo DONE` 模式）。

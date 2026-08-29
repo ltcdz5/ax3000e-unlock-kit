@@ -99,7 +99,7 @@ Windows 下运行 `deploy/一键部署.bat <IP>`：DNS 上游、anti-AD 去广�
 | 主路由（端口转发/QoS/DHCP/防火墙） | `panel/Start-MainRouter-panel.bat` | 127.0.0.1:8788 |
 
 命令行等价：`set ROUTER_PASSWD=密码 && python panel/router_monitor_ap.py`。
-依赖只有 `requirements.txt`（paramiko **<4**，5.x 移除了 ssh-rsa，连不上老 dropbear）。
+依赖只有 `requirements.txt`（paramiko **<5**，5.0 移除了 ssh-rsa，连不上老 dropbear；3.x/4.x 实测均可）。
 
 ## 安全基线（两个面板一致）
 

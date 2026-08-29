@@ -6,7 +6,7 @@ where python >nul 2>nul || (echo [!] Python not found. Install Python 3.9+ from 
 python -c "import paramiko" >nul 2>nul
 if errorlevel 1 (
     echo [i] one-time setup: installing paramiko...
-    pip install "paramiko<4,>=3" || (echo [!] pip install failed. Check network/proxy. & pause & exit /b)
+    pip install "paramiko<5,>=3" || (echo [!] pip install failed. Check network/proxy. & pause & exit /b)
 )
 set "ROUTER_HOST="
 set /p ROUTER_HOST=Router IP (the AX3000E itself, e.g. 192.168.2.x):

@@ -1,2 +1,2 @@
-# paramiko 必须 <4：5.0 移除了 ssh-rsa，无法连接老 dropbear
-paramiko<4
+# paramiko 必须 <5：5.0 移除了 ssh-rsa，无法连接老 dropbear（3.x/4.x 均实测可用，需带 disabled_algorithms）
+paramiko<5,>=3

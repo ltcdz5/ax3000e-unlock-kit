@@ -10,7 +10,7 @@
 | 中继 / AP（接上级路由） | `Start-AP-panel.bat` | 8787 | WiFi + DNS 去广告 + 监控 + 备份恢复 |
 | 主路由（自己拨号） | `Start-MainRouter-panel.bat` | 8788 | 另含端口转发 / QoS / DHCP 静态绑定 / 防火墙 / UPnP |
 
-启动器会问路由器 IP 和 SSH 密码（隐藏输入），首次自动安装 paramiko（需 <4）。
+启动器会问路由器 IP 和 SSH 密码（隐藏输入），首次自动安装 paramiko（需 <5，5.0 删了 ssh-rsa）。
 IP 忘了？跑 `tools/kit_doctor.py` 自动发现。
 
 ## 文件清单
