@@ -24,7 +24,47 @@ sys.modules["monitor_web"] = mw     # 面板 import monitor_web 时复用同一�
 main_panel = _load("main_panel_ut", "router_monitor_ax3000e.py")
 ap_panel = _load("ap_panel_ut", "router_monitor_ap.py")
 
+import device_profile as dp  # noqa: E402  设备识别解耦模块（PANEL_DIR 已在 _load 时入 sys.path）
+
 INJ = "'" + "$" + "(reboot)" + "'"
+
+
+# ---------- device_profile 设备识别（纯函数，不连路由器） ----------
+
+def test_device_profile_known_hardware_maps_to_verified():
+    r = dp.parse_device_profile("DEVICE_PRODUCT='Generic'\nDEVICE_MANUFACTURER='OpenWrt'", "RN07")
+    assert r["profile"]["verified"] is True
+    assert r["profile"]["name"] == "小米 AX3000E"
+    assert r["hardware"] == "RN07"
+    assert r["device_info"] == {"DEVICE_PRODUCT": "Generic", "DEVICE_MANUFACTURER": "OpenWrt"}
+
+
+def test_device_profile_unknown_hardware_is_unverified():
+    r = dp.parse_device_profile("", "XX99")
+    assert r["profile"]["verified"] is False
+    assert r["profile"]["name"] == "未知型号"
+    assert r["profile"]["ssh_rsa_only"] is False   # 未验证机型不得假设设备特化行为
+
+
+def test_device_profile_empty_hardware_treated_unknown():
+    r = dp.parse_device_profile(None, "")
+    assert r["profile"]["verified"] is False
+    assert r["hardware"] == ""
+
+
+def test_device_profile_collect_uses_injected_sh():
+    calls = []
+
+    def fake_sh(cmd, timeout=10):
+        calls.append(cmd)
+        return {"cat /etc/device_info 2>/dev/null": "DEVICE_PRODUCT='Generic'",
+                dp.HW_CMD: "RN07",
+                "uname -a 2>/dev/null": "Linux XiaoQiang 4.4.60 armv7l"}[cmd]
+
+    r = dp.collect(fake_sh)
+    assert len(calls) == 3
+    assert r["profile"]["name"] == "小米 AX3000E"
+    assert "XiaoQiang" in r["uname"]
 
 
 # ---------- monitor_web 纯函数 ----------

@@ -20,7 +20,7 @@ except ImportError:
 
 # 每节: (标题, 命令)。命令全部只读；不存在的命令输出留空即可
 SECTIONS = [
-    ("设备标识 / 固件版本", "cat /etc/device_info 2>/dev/null; echo ---; nvram get firmware_version 2>/dev/null; uci get xqcommon.sysinfo.firmware_version 2>/dev/null; echo '(若以上为空，版本号只经管理页暴露，需人工记录)'; uname -a"),
+    ("设备标识 / 固件版本", "cat /etc/device_info 2>/dev/null; echo ---; echo \"model=$(nvram get model 2>/dev/null) hardware=$(nvram get hardware 2>/dev/null) product=$(nvram get product_name 2>/dev/null)\"; nvram get firmware_version 2>/dev/null; uci get xqcommon.sysinfo.firmware_version 2>/dev/null; echo '(若版本号为空，版本号只经管理页暴露，需人工记录)'; uname -a"),
     ("CPU / 内核", "cat /proc/cpuinfo | grep -E 'model name|Hardware|processor' | sort -u; echo ---; cat /proc/version"),
     ("内存", "free"),
     ("SSH: dropbear 版本", "dropbear -V 2>&1 | head -n 1; echo ---; grep -n 'channel=' /etc/init.d/dropbear 2>/dev/null | head -n 3"),

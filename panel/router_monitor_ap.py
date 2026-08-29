@@ -10,6 +10,7 @@ import sys, os, json, time, threading, argparse, re
 from collections import deque
 
 import monitor_web
+import device_profile
 
 HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
 SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
@@ -405,9 +406,11 @@ def get_config():
         "grep -F 'query[' /tmp/dnsquery.log 2>/dev/null | tail -n 120",                    # 18
         "stat -c %Y /data/awavenue.gz 2>/dev/null",                                        # 19
         "stat -c %Y /data/antiad.gz 2>/dev/null",                                          # 20
+        "cat /etc/device_info 2>/dev/null",                                                # 21
+        device_profile.HW_CMD,                                                             # 22 机型识别源
     ])).split("@@")
-    if len(parts) < 21:
-        parts += [""] * (21 - len(parts))
+    if len(parts) < 23:
+        parts += [""] * (23 - len(parts))
 
     def seg(i):
         return parts[i].strip()
@@ -463,6 +466,8 @@ def get_config():
             mac = p[p.index("lladdr") + 1]
             devices.append({"ip": p[0], "mac": mac, "host": leases.get(mac, ""), "state": p[-1]})
     cfg["devices"] = devices
+    # 设备识别（解耦模块，纯解析；批内第 21/22 段采集）
+    cfg["device"] = device_profile.parse_device_profile(seg(21), seg(22))
     cfg["dns_queries"] = parse_dns_queries(parts[18])
     # 定时任务（行尾 #panel 标记归属面板的 cron 行；LED 定时行单独可见）
     crontab = parts[15].splitlines()

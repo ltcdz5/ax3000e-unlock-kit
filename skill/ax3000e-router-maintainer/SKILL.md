@@ -37,9 +37,10 @@ description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 
 ## 架构现状（v3.1.0）
 
 - `panel/monitor_web.py` = **双面板唯一 HTTP 服务层**：认证（HTTP Basic + hmac）、Host 回环校验、Origin 同源校验、路由。纯函数 `host_ok/origin_ok/auth_ok/escape_inline_json/parse_act_body` 可单测。
+- `panel/device_profile.py` = **设备识别解耦模块**：机型能力表（key = `nvram get model`，AX3000E=RN07）+ 纯解析函数；面板注入自己的 sh 采集。新机型只加表一行，不改面板；未验证机型功能键不得盲开。配套只读探针 `deploy/device_probe.py`（新设备实机校准用）。
 - AP 面板：`router_monitor_ap.py`（业务）+ `monitor_page.html`（前端，fetch+toast+refreshCfg 模式）。
 - 主面板：`router_monitor_ax3000e.py`——已删自有 Handler/认证（v3.0），`_page()` 服务端**零 SSH**（GET / 1.8ms），前端 JS 全 fetch。**不要复活** form/302/?msg= 与 `render_config_html`（已删除）。
-- `tests/test_security.py` 17 项本地单测（不连路由器）；CI sanity = py_compile + sh -n + pytest。
+- `tests/test_security.py` 21 项本地单测（不连路由器）；CI sanity = py_compile + sh -n + pytest。
 - **发版流程**：改码 → 本地 pytest → commit → **机主审核通过** → push → 重建 zip + release（附 zip 与 auto_ssh.sh 资产）→ 三步同步（见下）。
 
 ## DNS 体系现状与结论

@@ -10,6 +10,7 @@ import urllib.parse
 from collections import deque
 
 import monitor_web
+import device_profile
 
 HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
 SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
@@ -219,6 +220,8 @@ def get_config():
     cfg["qos_up"] = sh("uci get miqos.settings.upload 2>/dev/null")
     cfg["qos_down"] = sh("uci get miqos.settings.download 2>/dev/null")
     cfg["auto_ssh"] = sh("test -f /data/auto_ssh/auto_ssh.sh && echo y") == "y"
+    # 设备识别（解耦模块；注入本面板的 sh 回调，采集策略不变）
+    cfg["device"] = device_profile.collect(sh)
     cfg["dhcp_lease"] = sh("uci get dhcp.lan.leasetime 2>/dev/null")
     cfg["uptime"] = sh("uptime").split(",")[0].strip() if sh("uptime") else ""
     cfg["temp"] = history["temp"][-1] if history["temp"] else 0

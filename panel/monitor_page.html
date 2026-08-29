@@ -155,7 +155,8 @@ function renderCfg(c){
  document.getElementById('chip-uptime').textContent=c.uptime||'--';
  document.getElementById('chip-autossh').textContent=c.auto_ssh?(c.auto_ssh_ver||'已启用'):'未检测到';
  document.getElementById('chip-ipv6').textContent=(c.ipv6_blocked?'已拦截':'未拦截')+'（'+(c.ipv6_clients||0)+' 台在用）';
- document.getElementById('subline').textContent='SSH: '+E(c.host)+' · DNS 去广告 + WiFi 管理 · 温度阈值 <85 / 85-90 / >90';
+ var devn=(c.device&&c.device.profile&&c.device.profile.name)?c.device.profile.name:'';
+ document.getElementById('subline').textContent='SSH: '+E(c.host)+(devn?' · '+E(devn+(c.device.profile.verified?'':'（未验证）')):'')+' · DNS 去广告 + WiFi 管理 · 温度阈值 <85 / 85-90 / >90';
  h.push(card({span:1,title:'当前模式：有线中继 (AP)',badge:'<span class="badge '+(c.ssh?'on':'off')+'">SSH '+(c.ssh?'在线':'离线')+'</span>',
   tip:'本路由器仅负责 WiFi 接入 + DNS 去广告；IP/DHCP/NAT/防火墙/QoS/端口转发/UPnP 均由上级路由器 '+E(gw)+' 管理。',
   desc:'运行 '+E(c.uptime)+' · 温度 '+E(c.temp)+'°C · SSH自愈 '+(c.auto_ssh?'<span class="ok">'+E(c.auto_ssh_ver||'已启用')+'</span>':'<span class="bad">未检测到</span>')+' · IPv6 '+(c.ipv6_blocked?'<span class="ok">已拦截</span>':'<span class="warn">未拦截</span>')+'（'+(c.ipv6_clients||0)+' 台设备在用）'}));
