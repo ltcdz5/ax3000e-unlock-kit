@@ -73,7 +73,7 @@ description: 维护小米 AX3000E（RN07，固件 1.0.24）AP/中继模式路由
 ## 任务：发版
 
 1. commit → push（梯子！端口读注册表 ProxyServer）→ 机主已批准才 `gh release create vX.Y.Z`（zip 用 `git archive` 从 HEAD 构建 + auto_ssh.sh 单件资产）。
-2. **发版三步同步**：① `tr -d '\r' < repo/router/auto_ssh.sh | md5sum` vs 路由器 live md5，不一致先备份 live（.bak_vX）再上传+`sh -n`+install；② 面板 .py 变了重启进程；③ 复核 8787 存活 / df /data / 广告域名劫持。
+2. **发版三步同步**：① `tr -d '\r' < repo/router/auto_ssh.sh | md5sum` vs 路由器 live md5（**live 路径 = `/data/auto_ssh/auto_ssh.sh`**，不是 `/data/auto_ssh.sh`），不一致先备份 live（.bak_vX）再上传+`sh -n`+install；② 面板 .py 变了重启进程；③ 复核 8787 存活 / df /data / 广告域名劫持。
 3. 版本惯例：大改主版本号，小修就地编辑最新 release 说明；zip 资产用 `--clobber` 跟随 HEAD。
 
 ## 已确认结论（别重复踩/别重复试）
