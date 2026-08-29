@@ -44,7 +44,9 @@ tools/    0-login / 1-push .bat       维护者自用发版脚本（普通用户
 
 ## 快速开始
 
-**最简路径**：到 [Releases](../../releases) 下载 zip 解压 → 按第 1 步解锁 → 双击 `panel/` 里对应模式的启动器。
+**最简路径**：到 [Releases](../../releases) 下载 zip 解压 → 按第 1 步解锁 → 双击 `panel/` 里对应模式的启动器：
+- `Start-AP-panel.bat` —— 中继/AP 模式：WiFi + DNS 去广告 + 监控
+- `Start-MainRouter-panel.bat` —— 主路由模式：另含端口转发 / QoS / DHCP 静态绑定 / 防火墙 / UPnP
 
 ### 1 · 解锁 SSH（不丢配置）
 
