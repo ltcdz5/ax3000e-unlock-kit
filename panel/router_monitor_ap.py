@@ -379,7 +379,7 @@ def collector_loop():
 
 
 def get_config():
-    cfg = {"host": HOST}
+    cfg = {"host": HOST, "kit_version": monitor_web.KIT_VERSION}
     # 只读状态合并为单次 SSH 往返（原 20+ 次独立命令会与 3 秒采集循环抢 ssh_lock，界面卡顿）
     parts = sh("; echo '@@'; ".join([
         "cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null",                                 # 0

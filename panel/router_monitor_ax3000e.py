@@ -199,7 +199,7 @@ def collector_loop():
 
 
 def get_config():
-    cfg = {}
+    cfg = {"kit_version": monitor_web.KIT_VERSION}
     up = sh("cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null")
     cfg["dns_upstreams"] = [l.replace("server=", "").strip() for l in up.splitlines() if l.startswith("server=")]
     cfg["cache_size"] = sh("uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null") or "150"

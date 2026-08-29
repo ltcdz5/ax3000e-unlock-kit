@@ -77,6 +77,7 @@ description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 
 1. commit → push（梯子！端口读注册表 ProxyServer）→ 机主已批准才 `gh release create vX.Y.Z`（zip 用 `git archive` 从 HEAD 构建 + auto_ssh.sh 单件资产）。
 2. **发版三步同步**：① `tr -d '\r' < repo/router/auto_ssh.sh | md5sum` vs 路由器 live md5（**live 路径 = `/data/auto_ssh/auto_ssh.sh`**，不是 `/data/auto_ssh.sh`），不一致先备份 live（.bak_vX）再上传+`sh -n`+install；② 面板 .py 变了重启进程；③ 复核 8787 存活 / df /data / 广告域名劫持。
 3. 版本惯例：大改主版本号，小修就地编辑最新 release 说明；zip 资产用 `--clobber` 跟随 HEAD（资产名随仓库更名：`xiaomi-router-unlock-kit-vX.Y.Z.zip`，旧的 `ax3000e-unlock-kit-*.zip` 在下次发版时替换）。
+4. 发版必做三件可信度事：① 改 `panel/monitor_web.py` 的 `KIT_VERSION`（页脚显示，有单测门禁）；② 同步 `CHANGELOG.md`（从 release notes 汇编，离线可查）；③ 上传 `SHA256SUMS.txt` 资产（zip 用 `git archive` 从 tag 重建可逐字节复现，已实测验证）。
 
 ## 已确认结论（别重复踩/别重复试）
 

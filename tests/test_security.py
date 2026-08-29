@@ -81,6 +81,11 @@ def test_escape_inline_json_line_separators():
     assert chr(0x2028) not in out and chr(0x2029) not in out
 
 
+def test_kit_version_is_semver():
+    import re as _re
+    assert _re.fullmatch(r"\d+\.\d+\.\d+", mw.KIT_VERSION), "发版时必须同步更新 KIT_VERSION"
+
+
 def test_host_ok_blocks_non_loopback_in_local_mode():
     assert mw.host_ok(False, "127.0.0.1:8787")
     assert mw.host_ok(False, "localhost")
