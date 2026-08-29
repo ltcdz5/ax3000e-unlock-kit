@@ -134,7 +134,7 @@ apply_dns() {
     [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
     [ -s /data/microsoft.conf ] && cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf
     [ -s /data/noresolv.conf ] && cp /data/noresolv.conf /tmp/dnsmasq.d/94-noresolv.conf
-    [ -s /data/bytedance.conf ] && cp /data/bytedance.conf /tmp/dnsmasq.d/95-bytedance.conf
+    # 抖音系定向（95-bytedance.conf）已废弃，故意不恢复——防止复活
     [ -s /data/custom.conf ]   && cp /data/custom.conf   /tmp/dnsmasq.d/97-custom.conf
     if [ -s /data/upstreams.conf ]; then cp /data/upstreams.conf /tmp/dnsmasq.d/98-upstream.conf
     else printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=114.114.114.114\nserver=4.2.2.2\n' > /tmp/dnsmasq.d/98-upstream.conf

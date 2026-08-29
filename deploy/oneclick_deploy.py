@@ -84,15 +84,10 @@ else:
     for u in up:
         q(ssh, "echo 'server=" + u + "' >> /tmp/dnsmasq.d/98-upstream.conf")
     q(ssh, "cp /tmp/dnsmasq.d/98-upstream.conf /data/upstreams.conf")
-    print("DNS 8 上游已配置（字节x2 + 国内x3 + 海外x3）")
+    print("DNS 上游已配置（四条国内：阿里/腾讯/114/百度）")
 
-btd = ["douyin.com", "douyinstatic.com", "snssdk.com", "byteimg.com", "bytedance.com",
-       "toutiao.com", "ixigua.com", "douyinpic.com", "amemv.com", "bytecdn.cn", "pstatp.com", "bytefcdn.com"]
-q(ssh, "rm -f /tmp/dnsmasq.d/95-bytedance.conf")
-for d in btd:
-    q(ssh, "echo 'server=/" + d + "/180.184.1.1' >> /tmp/dnsmasq.d/95-bytedance.conf")
-q(ssh, "cp /tmp/dnsmasq.d/95-bytedance.conf /data/bytedance.conf")
-print("抖音系 %d 域名定向字节 DNS" % len(btd))
+# 抖音系定向字节 DNS（95-bytedance.conf）已废弃——实测字节自家 DNS 对自家域名无优势，
+# 且 180.184.1.1 存在多秒级停顿；故意不部署，防止复活。
 
 noip6 = ["pstatp.com", "douyinpic.com", "byteimg.com", "douyinstatic.com", "snssdk.com",
          "bytefcdn.com", "douyin.com", "bytedance.com", "amemv.com", "bytecdn.cn", "ixigua.com", "toutiao.com"]
