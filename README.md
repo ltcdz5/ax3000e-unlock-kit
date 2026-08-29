@@ -31,6 +31,8 @@ docs/     自救手册.md                  SSH 失效时的分步自救流程
           Mesh拓扑适配笔记.md         小米 Mesh（无线/有线回程）角色分工与落地顺序（预设计）
 tests/    test_security.py            本地单元测试（注入拒绝/白名单/转义/门禁，CI 执行）
 tools/    0-login / 1-push .bat       维护者自用发版脚本（普通用户无需理会）
+          unlock_wizard.py            解锁向导（GUI/CLI，自动登录+注入+验口+接力部署）
+          一键体检.bat / kit_doctor.py  自动发现路由器 IP + 状态体检 + 自动修复启动器 IP，列出手动待办
 ```
 
 ## 定位与边界
