@@ -2,6 +2,7 @@
 
 > 适用小米 AX3000E（RN07），同代 IPQ 平台（AX3000T 等）思路一致。
 > 官方固件 **1.0.24**；**中继/AP** 与 **主路由** 两种模式均覆盖，SSH 解锁与自愈体系通用。
+> 小米 **BE3600 2.5G** 预适配进行中：解锁方法与套件移植清单见 `docs/BE3600-解锁与适配指南.md`。
 > ⚠️ 仅供学习与自有设备折腾使用，风险自负。**升级固件 = 解锁全部报废。**
 
 ## 目录结构
@@ -11,9 +12,10 @@ panel/    router_monitor_ap.py        AP 面板（核心 + monitor_web.py 服务
           router_monitor_ax3000e.py   主路由面板（端口转发/QoS/DHCP/防火墙，安全基线与 AP 面板一致）
           Start-*.bat                 Windows 一键启动器（自动装依赖，见下）
 router/   auto_ssh.sh                 ★ v5 自愈脚本（放 /data/auto_ssh/，install 注册开机钩子）
-          configs/                    各配置持久副本（upstreams/bytedance/noipv6/microsoft/logqueries）
+          configs/                    各配置持久副本（upstreams/noipv6/microsoft/logqueries）
 deploy/   一键部署.bat / .py          SSH 通了以后一键部署 DNS/去广告/自愈
 docs/     自救手册.md                  SSH 失效时的分步自救流程
+          BE3600-解锁与适配指南.md     BE3600 2.5G 解锁方法 + 套件移植适配清单（预适配）
 tests/    test_security.py            本地单元测试（注入拒绝/白名单/转义/门禁，CI 执行）
 ```
 

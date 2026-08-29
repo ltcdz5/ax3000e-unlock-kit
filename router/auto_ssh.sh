@@ -137,7 +137,7 @@ apply_dns() {
     # 抖音系定向（95-bytedance.conf）已废弃，故意不恢复——防止复活
     [ -s /data/custom.conf ]   && cp /data/custom.conf   /tmp/dnsmasq.d/97-custom.conf
     if [ -s /data/upstreams.conf ]; then cp /data/upstreams.conf /tmp/dnsmasq.d/98-upstream.conf
-    else printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=114.114.114.114\nserver=4.2.2.2\n' > /tmp/dnsmasq.d/98-upstream.conf
+    else printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=114.114.114.114\nserver=180.76.76.76\n' > /tmp/dnsmasq.d/98-upstream.conf
     fi
     if [ "$adblock_on" = "1" ]; then
         [ -s /data/antiad.gz ]   && zcat /data/antiad.gz   > /tmp/dnsmasq.d/96-antiad.conf   2>/dev/null
