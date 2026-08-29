@@ -198,6 +198,8 @@ def main():
             print("  %d. %s" % (i, m))
     if not MANUAL and not FIXED:
         print("状态良好，无待办。")
+    if sys.stdin.isatty() and not os.environ.get("KIT_DOCTOR_NOPAUSE"):
+        input("\n按回车键退出…")
     return 0
 
 

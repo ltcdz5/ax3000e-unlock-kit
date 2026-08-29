@@ -216,7 +216,8 @@ def cli():
         run_unlock(ip, web_pass=pw, stok=stok or None)
     except Exception as e:
         print("❌ %s" % e)
-        sys.exit(1)
+    if sys.stdin.isatty():
+        input("\n按回车键退出…")
 
 
 if __name__ == "__main__":
