@@ -28,4 +28,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$TAG" "xiaomi-router-unlock-kit-$TAG.zip" router/auto_ssh.sh SHA256SUMS.txt --clobber
-          gh release delete-asset "$TAG" ax3000e-unlock-kit-v3.1.0.zip --yes 2>/dev/null || true

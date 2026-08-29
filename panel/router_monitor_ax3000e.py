@@ -909,7 +909,7 @@ function post(body){
 """
 
 
-# ---------- 服务层（v3.0 起与 AP 面板共享 monitor_web，认证/校验单一来源） ----------
+# ---------- 服务层（与 AP 面板共享 monitor_web，认证/校验单一来源） ----------
 
 def api_snapshot():
     with data_lock:
