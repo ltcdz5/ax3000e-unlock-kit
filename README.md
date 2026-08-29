@@ -1,5 +1,7 @@
 # 小米路由器解锁套件（xiaomi-router-unlock-kit）：SSH 解锁 + 去广告/DNS 定制 + 监控面板
 
+[![CI](https://github.com/ltcdz5/xiaomi-router-unlock-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/ltcdz5/xiaomi-router-unlock-kit/actions/workflows/ci.yml)
+
 > 核心在小米 AX3000E（RN07，官方固件 **1.0.24**）上实测验证，**中继/AP** 与 **主路由** 双模式全覆盖。
 > ⚠️ 仅供学习与自有设备折腾使用，风险自负。**升级固件 = 解锁全部报废。**
 > 本套件由 AI 辅助生成，所有功能均经自有设备实测验证后才发布，使用前请自行评估。
