@@ -217,7 +217,10 @@ def cli():
     except Exception as e:
         print("❌ %s" % e)
     if sys.stdin.isatty():
-        input("\n按回车键退出…")
+        try:
+            input("\n按回车键退出…")
+        except EOFError:
+            pass
 
 
 if __name__ == "__main__":

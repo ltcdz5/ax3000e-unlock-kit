@@ -3,7 +3,7 @@
 
 用法:
   python kit_doctor.py            只体检，列出状态与手动待办
-  python kit_doctor.py --fix      体检 + 自动修复（目前：把检测到的 IP 写回桌面启动器）
+  python kit_doctor.py --fix      体检 + 自动修复（启动器 IP 回写、关闭固件自动升级）
 
 检测原理（零凭据）：小米管理页 /cgi-bin/luci/web/home 无需登录即可取到 hardware 标识，
 用作局域网指纹扫描；SSH/路由器内部项用面板同款 paramiko 连接（密码默认 admin，可 --passwd 覆盖）。
@@ -85,6 +85,17 @@ def port_open(ip, port, t=1.5):
         return False
 
 
+def parse_dns_servers(ps_output):
+    """解析 Get-DnsClientServerAddress 输出 → IPv4 DNS 列表（去重保序；兼容表格/单列格式）。"""
+    out = []
+    for line in ps_output.splitlines():
+        parts = line.split()
+        if parts and re.fullmatch(r"\d+\.\d+\.\d+\.\d+", parts[-1]):
+            if parts[-1] not in out:
+                out.append(parts[-1])
+    return out
+
+
 def main():
     print("=" * 62)
     print("小米路由器解锁套件 · 一键体检")
@@ -157,6 +168,31 @@ def main():
                 say("✅", "DHCP 静态绑定 %s 条" % (binds or 0), "面板可增删" if (binds or "0") != "0" else "")
                 fwds = ssh_exec(ip, "uci show firewall 2>/dev/null | grep -c '@redirect'", A.passwd)
                 say("✅", "端口转发规则 %s 条" % (fwds or 0), "面板可增删" if (fwds or "0") != "0" else "")
+            # 去广告 DNS 链路：上级路由下发的 DNS 必须指向本机，否则静默失效
+            if gw and not port_open(gw.replace("via ", ""), 53, t=2):
+                say("✅", "去广告 DNS 链路", "上级网关未提供 DNS，客户端只能走本机")
+            elif gw:
+                servers = []
+                if os.name == "nt":
+                    try:
+                        ps = subprocess.run(
+                            ["powershell", "-NoProfile", "-Command",
+                             "(Get-DnsClientServerAddress -AddressFamily IPv4 | "
+                             "Select-Object -ExpandProperty ServerAddresses) -join \"`n\""],
+                            capture_output=True, timeout=15)
+                        servers = parse_dns_servers(ps.stdout.decode("utf-8", "replace"))
+                    except Exception:
+                        servers = []
+                if ip in servers:
+                    say("✅", "去广告 DNS 链路生效（本机 DNS 含 %s）" % ip)
+                elif servers:
+                    say("⚠️", "去广告可能未生效：本机 DNS 是 %s，不含 %s" % ("、".join(servers), ip),
+                        "上级路由 DHCP 需把 DNS 指向本机")
+                    MANUAL.append("上级路由 DHCP 的 DNS 指向本机")
+                else:
+                    say("ℹ️", "手动确认：上级路由 DHCP 的 DNS 已指向 %s" % ip, "指错则去广告静默失效")
+            else:
+                say("✅", "去广告 DNS 链路", "主路由模式，客户端直连本机")
         except Exception as e:
             say("⚠️", "SSH 登录失败（密码不是 %s？）" % A.passwd, "用 --passwd 指定；手动：改密码后同步启动器")
             MANUAL.append("确认 SSH 密码并同步启动器 ROUTER_PASSWD")
@@ -183,9 +219,31 @@ def main():
     else:
         say("ℹ️", "未找到桌面启动器", "直接用 panel/Start-*.bat 并设 ROUTER_HOST=%s" % ip)
 
-    # 必须手动项（无法从本机验证）
-    say("⚠️", "手动确认：管理页已关闭『自动升级』", "升级固件=解锁报废")
-    MANUAL.append("管理页关闭自动升级")
+    # 固件自动升级开关（可自动检测/关闭）
+    if ssh_ok:
+        try:
+            auto = ssh_exec(ip, "uci get otapred.settings.auto 2>/dev/null", A.passwd).strip()
+            if auto == "0":
+                say("✅", "固件自动升级已关闭")
+            elif auto == "1":
+                if A.fix:
+                    ssh_exec(ip, "uci set otapred.settings.auto=0; uci commit otapred", A.passwd)
+                    verify = ssh_exec(ip, "uci get otapred.settings.auto 2>/dev/null", A.passwd).strip()
+                    if verify == "0":
+                        say("🔧", "已自动关闭固件自动升级（otapred.settings.auto=0）", "升级固件=解锁报废")
+                        FIXED.append("关闭自动升级")
+                    else:
+                        say("⚠️", "自动关闭固件自动升级未生效", "手动：管理页关闭『自动升级』")
+                        MANUAL.append("管理页关闭自动升级")
+                else:
+                    say("⚠️", "固件自动升级仍开启（otapred.settings.auto=1）", "升级固件=解锁报废；加 --fix 自动关闭")
+                    MANUAL.append("关闭固件自动升级（--fix 或管理页）")
+            else:
+                say("⚠️", "手动确认：管理页已关闭『自动升级』", "本机读不到 otapred 开关；升级固件=解锁报废")
+                MANUAL.append("管理页关闭自动升级")
+        except Exception:
+            say("⚠️", "手动确认：管理页已关闭『自动升级』", "升级固件=解锁报废")
+            MANUAL.append("管理页关闭自动升级")
     say("⚠️", "手动确认：上级路由按 MAC 绑了静态 IP", "防 IP 漂移（绑定后本体检的扫描也不再需要）")
     MANUAL.append("上级路由绑静态 IP")
 
@@ -199,7 +257,10 @@ def main():
     if not MANUAL and not FIXED:
         print("状态良好，无待办。")
     if sys.stdin.isatty() and not os.environ.get("KIT_DOCTOR_NOPAUSE"):
-        input("\n按回车键退出…")
+        try:
+            input("\n按回车键退出…")
+        except EOFError:
+            pass
     return 0
 
 
