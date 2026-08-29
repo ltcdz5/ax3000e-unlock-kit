@@ -5,7 +5,7 @@ description: 维护小米路由器解锁套件（xiaomi-router-unlock-kit，原 
 
 # AX3000E 路由器维护 Skill（2026-08-29 00:4x 更新至 v3.1.0 后状态）
 
-配套仓库：https://github.com/ltcdz5/xiaomi-router-unlock-kit（代码权威来源，本地克隆 `C:\Users\xutengfa\ax3000e-unlock-kit`）
+配套仓库：https://github.com/ltcdz5/xiaomi-router-unlock-kit（代码权威来源，本地克隆 `%USERPROFILE%\ax3000e-unlock-kit`）
 配套文档：仓库 `docs/自救手册.md`；桌面 `路由器聊天记录-完整导出-20260828.md`（历史）；桌面 `面板交接-剩余任务-20260828.md`（已基本清完，可当验证清单）
 预适配文档（仓库 `docs/`）：`BE3600-解锁与适配指南.md`（解锁方法 A/B/C + 套件移植清单，待实机）、`Mesh拓扑适配笔记.md`（去广告挂主节点、子节点分流自愈，预设计）
 备份机：BE3600 2.5G 另有一套独立存档 `Desktop\路由器配置存档-20260827\BE3600-降级开SSH方法存档-20260829.md`，与本项目无关，勿混。
