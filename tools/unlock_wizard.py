@@ -124,7 +124,7 @@ def run_unlock(ip, web_pass=None, stok=None, log=print):
         log("接下来可运行一键部署: deploy/一键部署.bat %s" % ip)
         return True
     if rejected:
-        log("⚠️ 注入被拒且 22 口不通：该设备当前状态不吃此注入。参考 xmir-patcher 或 docs/BE3600-解锁与适配指南.md 的降级思路。")
+        log("⚠️ 注入被拒且 22 口不通：该设备当前状态不吃此注入。可参考 xmir-patcher 的降级思路，或看 docs/自救手册.md。")
     else:
         log("⚠️ 22 口暂未通。等 10-30 秒重试；仍不通请看 docs/自救手册.md")
     return False

@@ -3,7 +3,7 @@
 小米路由器实机校准探针（只读）：一次性输出设备画像，用于新设备适配核对
 用法: python device_probe.py [路由器IP]
 输出: 控制台 + device_profile_<IP>_<时间>.txt
-覆盖 docs/BE3600-解锁与适配指南.md 的"待验证清单"；对任何设备通用（AX3000E 可作基准对照）
+对任何小米设备通用（AX3000E 可作基准对照）
 """
 import sys, os, time, datetime
 sys.stdout.reconfigure(encoding='utf-8')

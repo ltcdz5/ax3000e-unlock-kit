@@ -18,7 +18,7 @@ DEVICE_PROFILES = {
         "led_ctl": True,        # /usr/sbin/led_ctl 可用
         "notes": "本套件实测基准",
     },
-    # BE3600 2.5G 硬件码待实机确认（见 docs/BE3600-解锁与适配指南.md 适配清单）
+    # 新机型：用 deploy/device_probe.py 实机校准后在此添加条目
 }
 
 # 机型识别源（AX3000E 实测：model=RN07，hardware/product_name 为空；

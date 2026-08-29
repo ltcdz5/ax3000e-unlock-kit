@@ -1,7 +1,7 @@
 name: release-latest
 
 # 小更新通道：push 到 main 即自动重建 zip + SHA256SUMS，覆盖上传到最新 release（原地更新）。
-# 大版本（新 tag）仍走手动发版流程，见 SKILL「任务：发版」。
+# 大版本（新 tag）仍走手动发版流程：打 tag → gh release create → 上传资产。
 on:
   push:
     branches: [main]
