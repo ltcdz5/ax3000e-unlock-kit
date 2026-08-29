@@ -213,8 +213,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(ctx):
     ctx = dict(ctx)
+    # 默认每次请求都从磁盘读模板（HTML 热加载；业务侧可传 bytes 覆盖此行为）
     if "page" not in ctx:
-        ctx["page"] = load_page()
+        ctx["page"] = load_page
     Handler.ctx = ctx
     port = ctx["webport"]
     if ctx.get("lan"):
