@@ -234,7 +234,7 @@ function renderCfg(c){
   return item('<span class="val">'+E(s.name)+'</span>',(s.running?'<span class="badge on">运行中</span>'+B('svc_stop','停止',{name:s.name},'停止 '+s.name+'？重启路由器前不会自动恢复','red'):'<span class="badge off">已停止</span>'+B('svc_start','启动',{name:s.name},'','gray')));});
  h.push(card({title:'服务精简',tip:'米家 App 云服务可停（重启路由器自动恢复，期间米家远程不可用）；管理页与日志不受影响。',body:lst(svcs,'未检测到服务状态')}));
  h.push(card({title:'系统操作',tip:'重启路由器约2分钟恢复；中继模式下不影响上级网络。',
-  row:B('reboot','重启路由器',{confirm:'yes'},'确定重启路由器？约2分钟断网','red')+B('dnsmasq_restart','重启DNS',{},'','gray')}));
+  row:B('reboot','重启路由器',{confirm:'yes'},'确定重启路由器？约2分钟断网','red')+B('dnsmasq_restart','重启DNS',{},'','gray')+B('restart_panel','重启面板',{confirm:'yes'},'确定重启面板？当前窗口会关闭，新面板自动在新窗口启动。','gray')}));
  document.getElementById('cfg-grid').innerHTML=h.join('');
  refreshHitrate();
 }

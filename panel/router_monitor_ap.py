@@ -930,6 +930,11 @@ def do_action(action, params=None):
             return "已停止 " + name + "（重启路由器后自动恢复）"
         sh("/etc/init.d/%s start 2>/dev/null" % scripts[name])
         return "已启动 " + name + "（若未起来请重启路由器）"
+    if action == "restart_panel":
+        import subprocess
+        subprocess.Popen([sys.executable] + sys.argv,
+                         creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
+        os._exit(0)
     return "未知操作"
 
 
