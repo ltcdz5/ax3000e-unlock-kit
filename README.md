@@ -28,6 +28,7 @@ docs/     自救手册.md                  SSH 失效时的分步自救流程
 tests/    test_security.py            本地单元测试（注入拒绝/白名单/转义/门禁，CI 执行）
 tools/    unlock_wizard.py            解锁向导（GUI/CLI，自动登录+注入+验口+接力部署）
           一键体检.bat / kit_doctor.py  自动发现路由器 IP + 状态体检 + 自动修复启动器 IP，列出手动待办
+          migration_pack.py           迁移包：整套配置/自愈/列表缓存导出，换机时一键导入
 ```
 
 ## 定位与边界

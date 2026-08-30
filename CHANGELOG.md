@@ -35,6 +35,7 @@
 - **解锁向导** `tools/unlock_wizard.py`（GUI/CLI）：IP+管理页密码全自动——MiWiFi 登录算法取 stok（sha256 真机验证）→ 注入 → 验 22 口 → 接力部署；1541 被拒有专门分支
 - **一键体检** `tools/kit_doctor.py`：零凭据局域网指纹扫描发现路由器；固件/SSH/自愈/去广告/容量/云服务/弱密码/面板逐项检查；**固件自动升级自动检测 + `--fix` 自动关闭**（`otapred.settings.auto`）；**去广告 DNS 链路静默失效检测**；启动器 IP 自动修复；主路由模式功能分支；结尾汇总手动待办
 - **实机校准探针** `deploy/device_probe.py`：只读单连接输出设备画像，新设备适配入口
+- **迁移包** `tools/migration_pack.py`：一键导出自愈脚本/去广告配置/列表缓存/设备画像（自动排除主机密钥），换机导入带 /data 容量净增预检、单通道流式上传、逐件 md5 回读校验与自愈自动安装
 - 设备识别解耦模块 `panel/device_profile.py`：机型能力表（`nvram get model`，RN07=AX3000E）+ 纯解析 + sh 注入；未验证机型功能键不盲开
 
 ### 工程与可信度
