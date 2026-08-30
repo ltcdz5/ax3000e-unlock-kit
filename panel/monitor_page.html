@@ -121,18 +121,17 @@ function switchTab(t){
  if(t==='hlth')refreshHealth();
 }
 function refreshHealth(){
- var g=document.getElementById('hlth-grid'),p=document.getElementById('hlth-progress'),
-     b=document.getElementById('hlth-bar'),s=document.getElementById('hlth-status');
- g.style.display='none';p.style.display='block';b.style.width='0%';s.textContent='检测中…';
- var anim=setInterval(function(){var w=parseInt(b.style.width);if(w<90)b.style.width=Math.min(w+8,90)+'%';},400);
- fetch('/api/healthtest').then(function(r){return r.json();}).then(function(d){
-  clearInterval(anim);b.style.width='100%';s.textContent='检测完成';
-  p.style.display='none';g.style.display='';
-  g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检 <button class="btn gray" onclick="refreshHealth()" style="float:right">重新检测</button></h3><pre style="font-size:11px;white-space:pre-wrap;color:var(--tx2)">'+E(JSON.stringify(d,null,2))+'</pre></div>';
+ var g=document.getElementById('hlth-grid');
+ g.innerHTML='<div class="desc" style="padding:20px;text-align:center">加载中…</div>';
+ fetch('/api/health').then(function(r){return r.json();}).then(function(d){
+  var h='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检 <button class="btn gray" onclick="refreshHealth()" style="float:right">刷新</button></h3></div>';
+  (d.items||[]).forEach(function(it){
+   h+='<div class="item"><span class="val">'+E(it.icon)+'</span><span>'+E(it.title)+'</span><span style="color:#7d8896">'+E(it.detail)+'</span></div>';
+  });
+  if(!d.items||!d.items.length)h+='<div class="desc">体检结果为空</div>';
+  g.innerHTML=h;
  }).catch(function(e){
-  clearInterval(anim);b.style.width='100%';s.textContent='请求失败';
-  p.style.display='none';g.style.display='';
-  g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:30px 0"><h3>请求失败</h3><div class="desc" style="margin:12px 0">'+E(e.message||'路由器无响应')+'</div><button class="btn green" onclick="refreshHealth()">重试</button></div>';
+  g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:20px"><h3>请求失败</h3><div class="desc" style="margin:12px 0">'+E(e.message||'路由器无响应')+'</div><button class="btn green" onclick="refreshHealth()">重试</button></div>';
  });
 }
 function B(action,label,p,cf,cls){
