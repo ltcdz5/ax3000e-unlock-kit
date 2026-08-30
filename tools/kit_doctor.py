@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.stdout.reconfigure(encoding="utf-8")
 
 # 套件版本（与 monitor_web.py 同步）
-KIT_VERSION = "2.1.0"
+KIT_VERSION = "2.2.0"
 
 # 检查 GitHub 最新版本
 def check_latest_version():
