@@ -34,6 +34,8 @@ history = {k: deque(maxlen=MAX_POINTS) for k in
            ["cpu", "mem_used_mb", "mem_total_mb", "temp", "rx", "tx", "conn", "ts"]}
 last_net = {}
 last_stat = {}
+collect_ms = 0
+collect_fails = 0
 
 
 def ssh_connect():
@@ -110,7 +112,9 @@ def sh_write(cmd, data, timeout=15):
 
 
 def collect():
+    global collect_ms, collect_fails
     now = time.time()
+    t0 = now
     # 单次 SSH 拉回全部采集数据(替代 5 次独立往返), WAN 口用 eth1.4(主路由)
     raw = sh(
         "head -1 /proc/stat; echo '@@'; "
@@ -119,10 +123,14 @@ def collect():
         "grep eth1.4 /proc/net/dev; echo '@@'; "
         "cat /proc/net/tcp | wc -l"
     )
+    dt_ms = (time.time() - t0) * 1000
+    collect_ms = round(dt_ms) if collect_ms == 0 else round(collect_ms * 0.7 + dt_ms * 0.3)
     cpu_pct = 0.0
     parts = raw.split("@@")
     if len(parts) < 5:
+        collect_fails += 1
         return
+    collect_fails = 0
 
     st = parts[0].strip()
     if st.startswith("cpu"):
@@ -190,56 +198,106 @@ def collect():
 
 
 def collector_loop():
+    global collect_fails
+    interval = INTERVAL
     while True:
         try:
             collect()
         except Exception:
-            pass
-        time.sleep(INTERVAL)
+            collect_fails += 1
+        if collect_fails >= 3:
+            interval = 6
+        elif collect_fails == 0 and interval > INTERVAL:
+            interval = INTERVAL
+        time.sleep(interval)
 
 
 def get_config():
+    """配置中心数据：单次 SSH 批处理全部只读命令（约 30 段），本地解析。"""
+    parts = sh("; echo '@@'; ".join([
+        "cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null",                                 # 0
+        "uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null",                                  # 1
+        "test -f /tmp/dnsmasq.d/hagezi.conf && wc -l < /tmp/dnsmasq.d/hagezi.conf || echo 0",  # 2
+        "test -f /tmp/dnsmasq.d/96-antiad.conf && wc -l < /tmp/dnsmasq.d/96-antiad.conf || echo 0",  # 3
+        "ls /tmp/dnsmasq.d/ 2>/dev/null",                                                   # 4
+        "cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null",                                   # 5
+        "ps | grep dropbear | grep -v grep",                                               # 6
+        "test -f /data/auto_ssh/auto_ssh.sh && echo y",                                    # 7
+        "uptime",                                                                          # 8
+        "uci show firewall 2>/dev/null | grep redirect | head -40",                         # 9
+        "cat /tmp/dhcp.leases 2>/dev/null",                                                # 10
+        "uci show dhcp 2>/dev/null | grep 'host['",                                       # 11
+        "cat /etc/crontabs/root 2>/dev/null",                                              # 12
+        "uci show firewall 2>/dev/null | grep '@rule['",                                   # 13
+        "uci get xiaoqiang.common.XLED 2>/dev/null",                                       # 14
+        "uci get wireless.guest_2G.disabled 2>/dev/null",                                  # 15
+        "uci get wireless.guest_5G.disabled 2>/dev/null",                                  # 16
+        "uci show wireless 2>/dev/null",                                                   # 17
+        "ps | grep miniupnpd | grep -v grep",                                              # 18
+        "uci get upnpd.config.download 2>/dev/null",                                       # 19
+        "uci get upnpd.config.upload 2>/dev/null",                                         # 20
+        "uci get miqos.settings.enabled 2>/dev/null",                                      # 21
+        "uci get miqos.settings.upload 2>/dev/null",                                       # 22
+        "uci get miqos.settings.download 2>/dev/null",                                     # 23
+        "uci get dhcp.lan.leasetime 2>/dev/null",                                          # 24
+        "test -f /data/adblock.hosts && wc -l < /data/adblock.hosts || echo 0",            # 25
+        device_profile.HW_CMD,                                                             # 26
+        "cat /etc/device_info 2>/dev/null",                                                # 27
+        "cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null",                        # 28
+        "cat /proc/sys/net/core/netdev_max_backlog 2>/dev/null",                           # 29
+    ])).split("@@")
+    if len(parts) < 30:
+        parts += [""] * (30 - len(parts))
+
+    def seg(i):
+        return parts[i].strip()
+
+    def num(i):
+        s = seg(i).split()
+        return int(s[0]) if s and s[0].isdigit() else 0
+
     cfg = {"kit_version": monitor_web.KIT_VERSION}
-    up = sh("cat /tmp/dnsmasq.d/98-upstream.conf 2>/dev/null")
-    cfg["dns_upstreams"] = [l.replace("server=", "").strip() for l in up.splitlines() if l.startswith("server=")]
-    cfg["cache_size"] = sh("uci get dhcp.@dnsmasq[0].cachesize 2>/dev/null") or "150"
-    # 去广告: 兼容 hagezi 或 anti-AD 两种列表(取行数)
-    hz = sh("wc -l /tmp/dnsmasq.d/hagezi.conf 2>/dev/null").split()[0] if sh("test -f /tmp/dnsmasq.d/hagezi.conf && echo y") == "y" else "0"
-    ad = sh("wc -l /tmp/dnsmasq.d/96-antiad.conf 2>/dev/null").split()[0] if sh("test -f /tmp/dnsmasq.d/96-antiad.conf && echo y") == "y" else "0"
-    cfg["adblock_antiad"] = max(int(hz or "0"), int(ad or "0"))
-    cfg["adblock_yhosts"] = sh("wc -l /data/adblock.hosts 2>/dev/null").split()[0] if sh("test -f /data/adblock.hosts && echo y") == "y" else 0
-    cfg["adblock_enabled"] = "99-adblock.conf" in sh("ls /tmp/dnsmasq.d/ 2>/dev/null")
-    custom = sh("cat /tmp/dnsmasq.d/97-custom.conf 2>/dev/null")
-    cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip() for l in custom.splitlines() if l.startswith("address=/")]
-    cfg["log_queries"] = "93-logqueries" in sh("ls /tmp/dnsmasq.d/ 2>/dev/null")
-    cfg["upnp"] = "miniupnpd" in sh("ps | grep miniupnpd | grep -v grep")
-    cfg["upnp_download"] = sh("uci get upnpd.config.download 2>/dev/null")
-    cfg["upnp_upload"] = sh("uci get upnpd.config.upload 2>/dev/null")
-    cfg["ssh"] = "dropbear" in sh("ps | grep dropbear | grep -v grep")
-    cfg["qos"] = sh("uci get miqos.settings.enabled 2>/dev/null")
-    cfg["qos_up"] = sh("uci get miqos.settings.upload 2>/dev/null")
-    cfg["qos_down"] = sh("uci get miqos.settings.download 2>/dev/null")
-    cfg["auto_ssh"] = sh("test -f /data/auto_ssh/auto_ssh.sh && echo y") == "y"
-    # 设备识别（解耦模块；注入本面板的 sh 回调，采集策略不变）
-    cfg["device"] = device_profile.collect(sh)
-    cfg["dhcp_lease"] = sh("uci get dhcp.lan.leasetime 2>/dev/null")
-    cfg["uptime"] = sh("uptime").split(",")[0].strip() if sh("uptime") else ""
+    cfg["dns_upstreams"] = [l.replace("server=", "").strip()
+                            for l in parts[0].splitlines() if l.startswith("server=")]
+    cfg["cache_size"] = seg(1) or "150"
+    hz = num(2)
+    ad = num(3)
+    cfg["adblock_antiad"] = max(hz, ad)
+    cfg["adblock_yhosts"] = num(25)
+    dns_dir = parts[4]
+    cfg["adblock_enabled"] = "99-adblock.conf" in dns_dir
+    cfg["log_queries"] = "93-logqueries" in dns_dir
+    cfg["custom_adblock"] = [re.sub(r"^address=/(.*)/.*$", r"\1", l).strip()
+                             for l in parts[5].splitlines() if l.startswith("address=/")]
+    cfg["upnp"] = "miniupnpd" in parts[18]
+    cfg["upnp_download"] = seg(19)
+    cfg["upnp_upload"] = seg(20)
+    cfg["ssh"] = "dropbear" in parts[6]
+    cfg["qos"] = seg(21)
+    cfg["qos_up"] = seg(22)
+    cfg["qos_down"] = seg(23)
+    cfg["auto_ssh"] = seg(7) == "y"
+    cfg["device"] = device_profile.parse_device_profile(seg(27), seg(26))
+    cfg["dhcp_lease"] = seg(24) or "12h"
+    cfg["uptime"] = seg(8).split(",")[0].strip() if seg(8) else ""
     cfg["temp"] = history["temp"][-1] if history["temp"] else 0
+    # 端口转发
     cfg["port_forwards"] = []
     cur = {}
-    for line in sh("uci show firewall 2>/dev/null | grep redirect | head -40").splitlines():
+    for line in parts[9].splitlines():
         m = re.match(r"firewall\.@redirect\[(\d+)\]\.(\w+)='(.*)'", line.strip())
         if m:
-            idx, k, v = m.group(1), m.group(2), m.group(3)
-            cur.setdefault(idx, {})[k] = v
+            cur.setdefault(m.group(1), {})[m.group(2)] = m.group(3)
     for idx, d in cur.items():
         if d.get("name") or d.get("dest_ip"):
-            cfg["port_forwards"].append({"id": idx, "name": d.get("name", ""), "src_dport": d.get("src_dport", ""),
-                                         "dest_ip": d.get("dest_ip", ""), "dest_port": d.get("dest_port", ""),
+            cfg["port_forwards"].append({"id": idx, "name": d.get("name", ""),
+                                         "src_dport": d.get("src_dport", ""),
+                                         "dest_ip": d.get("dest_ip", ""),
+                                         "dest_port": d.get("dest_port", ""),
                                          "proto": d.get("proto", "")})
     # 设备列表（DHCP 租约）
     devices = []
-    for line in sh("cat /tmp/dhcp.leases").splitlines():
+    for line in parts[10].splitlines():
         p = line.split()
         if len(p) >= 4:
             devices.append({"ip": p[2], "mac": p[1], "host": p[3]})
@@ -247,21 +305,20 @@ def get_config():
     # 静态绑定（dhcp host）
     binds = []
     cur = {}
-    for line in sh(r"uci show dhcp 2>/dev/null | grep 'host\['").splitlines():
+    for line in parts[11].splitlines():
         m = re.match(r"dhcp\.@host\[(\d+)\]\.(\w+)='(.*)'", line.strip())
         if m:
             cur.setdefault(m.group(1), {})[m.group(2)] = m.group(3)
     for idx, d in cur.items():
         binds.append({"id": idx, "mac": d.get("mac", ""), "ip": d.get("ip", ""), "name": d.get("name", "")})
     cfg["binds"] = binds
-    # 用户定时任务（行尾 #panel 标记归属面板的 cron 行）
-    crontab = sh("cat /etc/crontabs/root 2>/dev/null")
-    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab.splitlines()
-                         if l.rstrip().endswith("#panel")]
+    # 用户定时任务（行尾 #panel 标记）
+    crontab = parts[12].splitlines()
+    cfg["cron_tasks"] = [l.rstrip()[:-7].strip() for l in crontab if l.rstrip().endswith("#panel")]
     # 防火墙规则
     fw_rules = []
     cur = {}
-    for line in sh(r"uci show firewall 2>/dev/null | grep '@rule\['").splitlines():
+    for line in parts[13].splitlines():
         m = re.match(r"firewall\.@rule\[(\d+)\]\.(\w+)='(.*)'", line.strip())
         if m:
             cur.setdefault(m.group(1), {})[m.group(2)] = m.group(3)
@@ -272,17 +329,14 @@ def get_config():
     cfg["fw_rules"] = fw_rules
     cfg["adstats"] = get_ad_stats()
     # LED 状态
-    led_b = sh("uci get xiaoqiang.common.XLED 2>/dev/null")
-    cfg["led_blue"] = led_b.strip() == "1"
-    # Guest WiFi 状态（只读）
-    g2 = sh("uci get wireless.guest_2G.disabled 2>/dev/null")
-    g5 = sh("uci get wireless.guest_5G.disabled 2>/dev/null")
-    cfg["guest_wifi"] = {"2g": "off" if g2 == "1" or g2 == "" else "on", "5g": "off" if g5 == "1" or g5 == "" else "on"}
-
-    # WiFi 状态（单次 uci show 拉回本地解析, 替代 12 次独立 SSH）
-    wraw = sh("uci show wireless 2>/dev/null")
+    cfg["led_blue"] = seg(14) == "1"
+    # Guest WiFi 状态
+    g2 = seg(15); g5 = seg(16)
+    cfg["guest_wifi"] = {"2g": "off" if g2 == "1" or g2 == "" else "on",
+                         "5g": "off" if g5 == "1" or g5 == "" else "on"}
+    # WiFi 状态（本地解析 uci show wireless）
     uci = {}
-    for line in wraw.splitlines():
+    for line in parts[17].splitlines():
         if "=" in line:
             k, v = line.split("=", 1)
             uci[k.strip()] = v.strip().strip("'")
@@ -302,6 +356,10 @@ def get_config():
         "a_disabled": get("wireless.@wifi-iface[1].disabled"),
         "a_hidden": get("wireless.@wifi-iface[1].hidden"),
     }
+    # 性能参数状态
+    cfg["perf_cache"] = int(seg(1)) if seg(1).isdigit() else 0
+    cfg["perf_conntrack"] = num(28)
+    cfg["perf_backlog"] = num(29)
     return cfg
 
 
@@ -641,6 +699,16 @@ def do_action(action, params=None):
         else:
             sh("/usr/sbin/led_ctl led_on")
             return "LED 已开启"
+    if action == "perf_optimize":
+        out = sh(
+            "uci set dhcp.@dnsmasq[0].cachesize=2048; uci commit dhcp; "
+            "echo 32768 > /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null; "
+            "echo 2048 > /proc/sys/net/core/netdev_max_backlog 2>/dev/null; "
+            "echo '4096 87380 16777216' > /proc/sys/net/ipv4/tcp_rmem 2>/dev/null; "
+            "echo '4096 65536 16777216' > /proc/sys/net/ipv4/tcp_wmem 2>/dev/null; "
+            "echo OK")
+        sh("/etc/init.d/dnsmasq restart")
+        return "路由器优化已执行：DNS缓存 2048，连接跟踪 32768，网卡队列 2048，TCP缓冲区扩大"
     if action == "backup":
         total = sh("uci show 2>/dev/null | wc -l")
         return "配置项共 " + total + " 行（完整配置在路由器 /etc/config/，本面板可查看摘要）"
@@ -743,7 +811,7 @@ function switchTab(t){
  document.getElementById('tab-cfg').style.display=t==='cfg'?'':'none';
  document.getElementById('tb-mon').className='tab'+(t==='mon'?' active':'');
  document.getElementById('tb-cfg').className='tab'+(t==='cfg'?' active':'');
-
+ if(t==='cfg')loadCfg(0);
 }
 function showMsg(t){var m=document.getElementById('msg');m.textContent=t;m.style.display='block';setTimeout(function(){m.style.display='none';},3000);}
 function initCanvas(id){var cv=document.getElementById(id),dpr=window.devicePixelRatio||1;cv.width=560*dpr;cv.height=150*dpr;cv.style.width='100%';cv.style.height='150px';return cv;}
@@ -791,7 +859,7 @@ function refresh(){
  }).catch(function(){});
 }
 setInterval(refresh,2000);refresh();
-setTimeout(function(){showMsg('✅ 已连接');loadCfg(0);},300);
+setTimeout(function(){showMsg('✅ 已连接');},300);
 
 function badge(on){return '<span class="badge '+(on?'on':'off')+'">'+(on?'已开':'已关')+'</span>';}
 function tip(t){return '<div class="tip">💡 建议：'+t+'</div>';}
@@ -899,12 +967,13 @@ function renderCfgBody(d){
   // 系统操作
   // LED + 备份 + Guest
   // 性能优化（高级）
+  var perfDesc='DNS 缓存 '+d.perf_cache+' 条 · 连接跟踪 '+d.perf_conntrack+' · 网卡队列 '+d.perf_backlog;
   h+=panel('性能优化','','对游戏/网页有帮助的深度优化：DNS 上游测速排序（解析更快）、WiFi 功率即时调整（信号强度/省电）。硬件 NAT 已启用。',
-    '硬件 NAT: 已启用 (NSS 加速) · 队列: fq_codel · 连接数: 483/16384',
+    '硬件 NAT: 已启用 (NSS 加速) · ' + perfDesc,
     '<div class="row"><button class="btn" data-act="dns_speedtest">DNS 测速</button><button class="btn green" data-act="dns_fastest" data-confirm="用最快的4个上游并重启DNS？">一键用最快</button></div>'+
     '<div class="row">5G 功率 <select class="inp" id="pw5"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option><option value="8">8</option></select><button class="btn" data-act="wifi_power" data-band="5g" data-inp="pw5">设5G功率</button></div>'+
     '<div class="row">2.4G 功率 <select class="inp" id="pw2"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option><option value="8">8</option></select><button class="btn" data-act="wifi_power" data-band="2g" data-inp="pw2">设2.4G功率</button></div>',
-    '');
+    '<button class="btn green" data-act="perf_optimize" data-confirm="一键优化路由器参数：DNS缓存→2048、连接跟踪→32768、网卡队列→2048、TCP缓冲区扩大。确认？">一键路由器优化</button>');
   // 防火墙规则（高级）
   var fr='';
   d.fw_rules.forEach(function(x){
@@ -1018,7 +1087,9 @@ def api_snapshot():
                            "temp": history["temp"][-1] if history["temp"] else 0,
                            "rx": history["rx"][-1] if history["rx"] else 0,
                            "tx": history["tx"][-1] if history["tx"] else 0,
-                           "conn": history["conn"][-1] if history["conn"] else 0}}
+                           "conn": history["conn"][-1] if history["conn"] else 0,
+                           "collect_ms": collect_ms,
+                           "ssh_ok": collect_fails < 3}}
 
 
 def _page():
