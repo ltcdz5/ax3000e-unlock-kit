@@ -75,20 +75,8 @@ a.dl:hover{text-decoration:underline}
 </div>
 <div id="tab-mon">
 ...
-<div id="tab-hlth" style="display:none">
- <div class="cfg-grid" id="hlth-grid">
-  <div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:30px 0">
-   <h3>一键体检</h3>
-   <div class="desc" style="margin:12px 0">检查路由器固件、SSH、自愈、去广告、容量等关键状态</div>
-   <button class="btn green" onclick="refreshHealth()">开始检测</button>
-  </div>
- </div>
- <div id="hlth-progress" style="display:none;margin:16px auto;max-width:400px;text-align:center">
-  <div style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden">
-   <div id="hlth-bar" style="height:100%;width:0%;background:var(--acc);border-radius:3px;transition:width .3s"></div>
-  </div>
-  <div class="desc" id="hlth-status" style="margin-top:8px">检测中…</div>
- </div>
+<div id="tab-hlth" style="display:none;height:100%">
+ <iframe src="/healthpage" style="width:100%;height:80vh;border:none;background:transparent"></iframe>
 </div>
 <div class="cards">
  <div class="card"><div class="v num" id="c-cpu">--</div><div class="l">CPU 使用率</div><div class="s" id="s-cpu"></div></div>
@@ -118,7 +106,6 @@ function switchTab(t){
  document.getElementById('tb-cfg').className='tab'+(t==='cfg'?' active':'');
  document.getElementById('tb-hlth').className='tab'+(t==='hlth'?' active':'');
  if(t==='cfg'&&!CFG)refreshCfg();
- if(t==='hlth')refreshHealth();
 }
 function refreshHealth(){
  var g=document.getElementById('hlth-grid');
