@@ -578,39 +578,48 @@ def run_net_test():
 
 
 def get_health():
-    """一键体检（面板版）：运行关键检查，返回 [{icon, title, detail}]。"""
+    """一键体检（面板版）：单次 SSH 往返完成全部检查，返回 [{icon, title, detail}]。"""
     items = []
     def add(icon, title, detail=""):
         items.append({"icon": icon, "title": title, "detail": detail})
-    try:
-        add("✅", "路由器连接", "SSH 在线")
-    except Exception:
+    raw = sh(
+        "curl -s --max-time 3 http://127.0.0.1/cgi-bin/luci/api/xqsystem/init_info 2>/dev/null; echo @@;"
+        "curl -s --max-time 3 http://127.0.0.1/cgi-bin/luci/api/xqsystem/upgrade_status 2>/dev/null; echo @@;"
+        "uci get otapred.settings.auto 2>/dev/null; echo @@;"
+        "test -f /data/auto_ssh/auto_ssh.sh && grep -c auto_ssh /etc/crontabs/root 2>/dev/null || echo 0; echo @@;"
+        "test -f /tmp/dnsmasq.d/96-antiad.conf && echo y || echo n; echo @@;"
+        "df /data | tail -n 1; echo @@;"
+        "ps w | grep -E 'messagingagent|mosquitto|xq_info_sync_mqtt' | grep -v grep | wc -l", timeout=20)
+    parts = raw.split("@@")
+    def seg(i):
+        return parts[i].strip() if i < len(parts) else ""
+    if not seg(0):
         add("❌", "路由器连接", "SSH 不通")
         return items
+    add("✅", "路由器连接", "SSH 在线")
+    import json
     try:
-        rom = sh("curl -s --max-time 3 http://127.0.0.1/cgi-bin/luci/api/xqsystem/init_info 2>/dev/null")
-        import json
-        info = json.loads(rom)
+        info = json.loads(seg(0))
         rv = info.get("romversion", "?")
         add("✅" if rv == "1.0.24" else "⚠️", "固件版本", "%s（%s）" % (rv, "实测基准" if rv == "1.0.24" else "校准后可用"))
-        up = sh("curl -s --max-time 3 http://127.0.0.1/cgi-bin/luci/api/xqsystem/upgrade_status 2>/dev/null")
-        u = json.loads(up)
-        add("✅" if u.get("status") == 0 else "⚠️", "固件升级",
-            "无新版本" if u.get("status") == 0 else "告警：有新固件，切勿升级")
+        if seg(1):
+            u = json.loads(seg(1))
+            add("✅" if u.get("status") == 0 else "⚠️", "固件升级",
+                "无新版本" if u.get("status") == 0 else "告警：有新固件，切勿升级")
     except Exception:
         add("ℹ️", "固件版本", "读取失败")
-    auto = sh("uci get otapred.settings.auto 2>/dev/null").strip()
-    add("✅" if auto == "0" else "⚠️", "自动升级", "已关闭" if auto == "0" else "仍开启（--fix 可关闭）")
-    heal = sh("test -f /data/auto_ssh/auto_ssh.sh && grep -c auto_ssh /etc/crontabs/root 2>/dev/null")
-    add("✅" if heal and int(heal.splitlines()[-1] or 0) >= 1 else "⚠️",
-        "三层自愈", "已安装" if heal and int(heal.splitlines()[-1] or 0) >= 1 else "未装全")
-    ad = sh("test -f /tmp/dnsmasq.d/96-antiad.conf && echo y")
-    add("✅" if ad.strip() == "y" else "⚠️", "去广告列表", "已加载" if ad.strip() == "y" else "未加载")
-    df = sh("df /data | tail -n 1").split()
+    auto = seg(2)
+    add("✅" if auto == "0" else "⚠️", "自动升级", "已关闭" if auto == "0" else "仍开启")
+    heal = seg(3)
+    add("✅" if heal.isdigit() and int(heal) >= 1 else "⚠️",
+        "三层自愈", "已安装" if heal.isdigit() and int(heal) >= 1 else "未装全")
+    ad = seg(4)
+    add("✅" if ad == "y" else "⚠️", "去广告列表", "已加载" if ad == "y" else "未加载")
+    df = seg(5).split()
     free = df[-3] if len(df) >= 4 else "?"
     ok = free.isdigit() and int(free) >= 200
     add("✅" if ok else "⚠️", "/data 容量", "%sK 剩余" % free)
-    svc = sh("ps w | grep -E 'messagingagent|mosquitto|xq_info_sync_mqtt' | grep -v grep | wc -l")
+    svc = seg(6)
     add("✅" if svc.strip() == "0" else "ℹ️", "米家云服务", "已精简" if svc.strip() == "0" else "运行中")
     return items
 
