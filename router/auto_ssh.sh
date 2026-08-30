@@ -115,6 +115,9 @@ ensure_refresh_cron() {
 
 apply_dns() {
     ensure_refresh_cron
+    # 每次开机执行一次系统调优（重启后恢复默认，所以每次开机都要设）
+    echo 32768 > /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null
+    echo 2048 > /proc/sys/net/core/netdev_max_backlog 2>/dev/null
     # 本次开机已就绪则直接返回（重载不重复干活）
     if [ -f $marker ] || { [ -s /tmp/dnsmasq.d/96-antiad.conf ] && [ -s /tmp/dnsmasq.d/98-upstream.conf ] && pidof dnsmasq >/dev/null; }; then
         touch $marker; return 0
