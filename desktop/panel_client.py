@@ -54,6 +54,12 @@ def fingerprint(ip):
 
 def start_panel():
     """在后台线程启动面板 HTTP 服务"""
+    # panel 模块使用 import monitor_web 而非 from . import monitor_web
+    # 所以需要把 panel 目录加入 sys.path
+    panel_dir = os.path.join(os.path.dirname(__file__))
+    if getattr(sys, 'frozen', False):
+        panel_dir = sys._MEIPASS
+    sys.path.insert(0, os.path.join(panel_dir, "panel"))
     import panel.monitor_web as mw
     import panel.router_monitor_ap as ap
     # 设置环境变量
