@@ -199,9 +199,8 @@ def main():
                 if ip in servers:
                     say("✅", "去广告 DNS 链路生效（本机 DNS 含 %s）" % ip)
                 elif servers:
-                    say("⚠️", "去广告可能未生效：本机 DNS 是 %s，不含 %s" % ("、".join(servers), ip),
-                        "上级路由 DHCP 需把 DNS 指向本机")
-                    MANUAL.append("上级路由 DHCP 的 DNS 指向本机")
+                    say("ℹ️", "去广告链路检测：本机 DNS 是 %s，不含 %s" % ("、".join(servers), ip),
+                        "本机可能有特殊 DNS 配置，其他设备不受影响")
                 else:
                     say("ℹ️", "手动确认：上级路由 DHCP 的 DNS 已指向 %s" % ip, "指错则去广告静默失效")
             else:
@@ -257,7 +256,7 @@ def main():
         except Exception:
             say("⚠️", "手动确认：管理页已关闭『自动升级』", "升级固件=解锁报废")
             MANUAL.append("管理页关闭自动升级")
-    say("⚠️", "手动确认：上级路由按 MAC 绑了静态 IP", "防 IP 漂移（绑定后本体检的扫描也不再需要）")
+    say("ℹ️", "手动确认：上级路由按 MAC 绑了静态 IP", "防 IP 漂移（绑定后本体检的扫描也不再需要）")
     MANUAL.append("上级路由绑静态 IP")
 
     print("-" * 62)
