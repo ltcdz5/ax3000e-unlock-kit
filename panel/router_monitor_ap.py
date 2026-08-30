@@ -936,7 +936,7 @@ def do_action(action, params=None):
             return "未知服务"
         if action == "svc_stop":
             sh("/etc/init.d/%s stop 2>/dev/null; killall %s 2>/dev/null" % (scripts[name], name))
-            return "已停止 " + name + "（重启路由器后自动恢复）"
+            return "已停止 " + name + "（可手动启动）"
         sh("/etc/init.d/%s start 2>/dev/null" % scripts[name])
         return "已启动 " + name + "（若未起来请重启路由器）"
     if action == "restart_panel":
