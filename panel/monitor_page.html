@@ -71,8 +71,11 @@ a.dl:hover{text-decoration:underline}
 <div class="tabs">
  <div class="tab active" id="tb-mon" onclick="switchTab('mon')">性能监控</div>
  <div class="tab" id="tb-cfg" onclick="switchTab('cfg')">配置中心</div>
+ <div class="tab" id="tb-hlth" onclick="switchTab('hlth')">健康检查</div>
 </div>
 <div id="tab-mon">
+...
+<div id="tab-hlth" style="display:none"><div class="cfg-grid" id="hlth-grid">加载中…</div></div>
 <div class="cards">
  <div class="card"><div class="v num" id="c-cpu">--</div><div class="l">CPU 使用率</div><div class="s" id="s-cpu"></div></div>
  <div class="card"><div class="v num" id="c-mem">--</div><div class="l">内存 (已用/可用)</div><div class="s" id="s-mem"></div></div>
@@ -96,9 +99,23 @@ function showMsg(t){var m=document.getElementById('msg');m.textContent=t;m.style
 function switchTab(t){
  document.getElementById('tab-mon').style.display=t==='mon'?'':'none';
  document.getElementById('tab-cfg').style.display=t==='cfg'?'':'none';
+ document.getElementById('tab-hlth').style.display=t==='hlth'?'':'none';
  document.getElementById('tb-mon').className='tab'+(t==='mon'?' active':'');
  document.getElementById('tb-cfg').className='tab'+(t==='cfg'?' active':'');
+ document.getElementById('tb-hlth').className='tab'+(t==='hlth'?' active':'');
  if(t==='cfg'&&!CFG)refreshCfg();
+ if(t==='hlth')refreshHealth();
+}
+function refreshHealth(){
+ var g=document.getElementById('hlth-grid');g.innerHTML='加载中…';
+ fetch('/api/health').then(function(r){return r.json();}).then(function(d){
+  var h='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检</h3></div>';
+  (d.items||[]).forEach(function(it){
+   h+='<div class="item"><span class="val">'+E(it.icon)+'</span><span>'+E(it.title)+'</span><span style="color:#7d8896">'+E(it.detail)+'</span></div>';
+  });
+  if(!d.items||!d.items.length)h+='<div class="desc">体检结果为空</div>';
+  g.innerHTML=h;
+ }).catch(function(){g.innerHTML='<div class="desc">体检请求失败</div>';});
 }
 function B(action,label,p,cf,cls){
  return '<button class="btn '+(cls||'')+'" type="button" data-act="'+E(action)+'" data-p="'+E(JSON.stringify(p||{}))+'"'+(cf?' data-cf="'+E(cf)+'"':'')+'>'+label+'</button>';
@@ -111,7 +128,8 @@ function refreshCfg(){
  .catch(function(){var g=document.getElementById('cfg-grid');if(g)g.innerHTML='<div class="cfg-panel"><h3>⚠️ 配置加载失败</h3><div class="desc">SSH 连接失败、路由器重启中或密码已更改。<a href="javascript:refreshCfg()" style="color:var(--acc)">点击重试</a>；若持续失败请看 <b>docs/自救手册.md</b>。</div></div>';})
  .finally(function(){cfgBusy=false;});
 }
-function doAct(a,p,cf){
+var LONG={antiad_update:'更新中…',awavenue_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',backup:'备份中…',restore:'恢复中…'};
+function doAct(a,p,cf,b){
  var real={},missing=null;
  Object.keys(p||{}).forEach(function(k){
   var v=p[k];
@@ -125,17 +143,19 @@ function doAct(a,p,cf){
  if(a==='dns_add'){real={server:V('up-server')};}
  if(a==='ad_custom_add'){real={domain:V('ad-domain')};}
  if(cf&&!confirm(cf))return;
+ if(b&&LONG[a]){b.disabled=true;b.dataset.orig=b.textContent;b.textContent=LONG[a];}
  fetch('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a,params:real})})
  .then(function(r){return r.json();}).then(function(d){
   showMsg(d.ok?('✅ '+d.msg):('❌ '+(d.error||'失败')));
   if(d.ok)refreshCfg();
- }).catch(function(){showMsg('操作失败：连接中断');});
+  if(b&&LONG[a]){b.disabled=false;b.textContent=b.dataset.orig;}
+ }).catch(function(){showMsg('操作失败：连接中断');if(b&&LONG[a]){b.disabled=false;b.textContent=b.dataset.orig;}});
 }
 document.addEventListener('click',function(ev){
  var b=ev.target.closest?ev.target.closest('button[data-act]'):null;
  if(!b)return;
  var p={};try{p=JSON.parse(b.dataset.p||'{}');}catch(e){}
- doAct(b.dataset.act,p,b.dataset.cf||'');
+ doAct(b.dataset.act,p,b.dataset.cf||'',b);
 },false);
 function card(o){
  return '<div class="cfg-panel"'+(o.span?' style="grid-column:1/-1"':'')+'><h3>'+o.title+(o.badge||'')+'</h3>'+(o.tip?'<div class="tip">'+o.tip+'</div>':'')+(o.desc?'<div class="desc">'+o.desc+'</div>':'')+(o.body||'')+(o.row?'<div class="row">'+o.row+'</div>':'')+'</div>';
