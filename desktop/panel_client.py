@@ -59,6 +59,18 @@ def start_panel():
     return proc
 
 
+def gui_input(prompt, default=""):
+    """GUI 输入框（窗口化 exe 没有 stdin 时的替代）"""
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog
+        root = tk.Tk()
+        root.withdraw()
+        return simpledialog.askstring("路由器面板", prompt, initialvalue=default) or default
+    except Exception:
+        return default
+
+
 def main():
     global router_ip, router_pass
     router_ip = os.environ.get("ROUTER_HOST", "")
@@ -72,10 +84,10 @@ def main():
             router_ip = ip
             print("发现路由器 %s (%s)" % (ip, hw))
         else:
-            router_ip = input("未发现路由器，请输入 IP: ").strip()
+            router_ip = gui_input("未发现路由器，请输入路由器 IP", "192.168.2.106")
 
     if not router_pass:
-        router_pass = input("请输入 SSH 密码: ").strip()
+        router_pass = gui_input("请输入 SSH 密码", "admin")
 
     # 启动面板进程
     panel_proc = start_panel()
