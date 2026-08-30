@@ -165,6 +165,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"items": [{"icon": "✅", "title": "测试项", "detail": "API 正常"}]})
         elif p == "/api/adstats" and c.get("ad_stats"):
             self._send(200, c["ad_stats"]())
+        elif p == "/healthpage":
+            try:
+                items = c["health_check"]()
+                lines = ['<div class="item"><span class="icon">%s</span><span class="title">%s</span><span class="detail">%s</span></div>' %
+                         (it.get("icon", ""), it.get("title", ""), it.get("detail", "")) for it in items]
+                body = '<h3>一键体检</h3>' + "".join(lines)
+            except Exception as e:
+                body = '<h3>体检失败</h3><div class="detail">%s</div>' % str(e)
+            html = ('<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">'
+                    '<title>健康检查</title><style>'
+                    'body{font-family:sans-serif;background:#13161a;color:#d0d4d9;padding:20px;max-width:600px;margin:0 auto}'
+                    '.item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #2a3038}'
+                    '.icon{font-size:20px}.title{flex:1}.detail{color:#7d8896;font-size:13px}'
+                    'h3{color:#e0e4e9;margin-bottom:16px}'
+                    '</style></head><body>%s</body></html>' % body)
+            self._send_bytes(200, html.encode("utf-8"), "text/html; charset=utf-8")
         elif p == "/api/health" and c.get("health_check"):
             try:
                 self._send(200, {"items": c["health_check"]()})
