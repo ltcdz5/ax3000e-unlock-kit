@@ -135,6 +135,8 @@ apply_dns() {
         rm -f /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/90-awavenue.conf
     fi
     uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null
+    # 纯统计日志（不含 log-queries，不记录每个查询，只接 SIGUSR1 转储供面板显示命中率）
+    echo 'log-facility=/tmp/dnsquery.log' > /tmp/dnsmasq.d/93-stats.conf
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
     [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
     [ -s /data/microsoft.conf ] && cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf
