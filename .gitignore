@@ -5,3 +5,6 @@ panel_stdout.log
 panel_stderr.log
 *.bak*
 backups/
+dist/
+build/
+*.spec
