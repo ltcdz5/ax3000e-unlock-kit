@@ -6,8 +6,11 @@
 import sys, os, threading, json, socket, urllib.request, webbrowser, re, time
 from concurrent.futures import ThreadPoolExecutor
 
-# 添加上级目录到路径，使 panel 模块可导入
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# 添加上级目录或 PyInstaller 打包目录到路径
+if getattr(sys, 'frozen', False):
+    sys.path.insert(0, sys._MEIPASS)
+else:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 WEBPORT = 8787
 PANEL_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "panel", "router_monitor_ap.py")
