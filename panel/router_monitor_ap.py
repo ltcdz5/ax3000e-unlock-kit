@@ -512,6 +512,7 @@ def get_config():
     cfg["mode"] = "ap"
     # 本地历史备份列表（不走 SSH）
     cfg["backups"] = list_backups()
+    cfg["adstats"] = get_ad_stats()
     return cfg
 
 

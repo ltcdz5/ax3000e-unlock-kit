@@ -183,6 +183,9 @@ function renderCfg(c){
  h.push(card({title:'DNS 缓存',tip:'512-4096 合适。命中率越高解析越快（自上次开机累计）。',
   desc:'命中率 <b id="dns-hitrate" class="num">测量中…</b> <span id="dns-hitrate-detail" style="color:#7d8896"></span>',
   body:inpRow(['<input class="inp num" id="cache-size" value="'+E(c.cache_size)+'">',B('cache_save','保存',{},'',''),'<button class="btn gray" type="button" onclick="refreshHitrate()">刷新命中率</button>'])}));
+ var ads=c.adstats||{}; var r=ads.block_rate||0;
+ h.push(card({title:'去广告统计',tip:'自上次开机累计。',
+  desc:'<span class="val">'+E(ads.total_domains||'0')+'</span> 条规则 · 拦截 <span class="val">'+E(ads.blocked_today||'0')+'</span> 次 · 缓存 <span class="val">'+E(ads.cached||'0')+'</span> 条 · 拦截率 <span class="val">'+(r>0?r+'%':'<1%')+'</span>'}));
  var adOn=!!c.adblock_enabled;
  var ageTxt=function(v){return v==null?'未安装':v+' 天前';};
  h.push(card({title:'去广告',badge:'<span class="badge '+(adOn?'on':'off')+'">'+(adOn?'已开':'已关')+'</span>',
