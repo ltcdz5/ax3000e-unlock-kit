@@ -127,12 +127,8 @@ function refreshHealth(){
  var anim=setInterval(function(){var w=parseInt(b.style.width);if(w<90)b.style.width=Math.min(w+8,90)+'%';},400);
  fetch('/api/health').then(function(r){return r.json();}).then(function(d){
   clearInterval(anim);b.style.width='100%';s.textContent='检测完成';
-  var h='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检 <button class="btn gray" onclick="refreshHealth()" style="float:right">重新检测</button></h3></div>';
-  (d.items||[]).forEach(function(it){
-   h+='<div class="item"><span class="val">'+E(it.icon)+'</span><span>'+E(it.title)+'</span><span style="color:#7d8896">'+E(it.detail)+'</span></div>';
-  });
-  if(!d.items||!d.items.length)h+='<div class="desc">体检结果为空</div>';
-  p.style.display='none';g.style.display='';g.innerHTML=h;
+  p.style.display='none';g.style.display='';
+  g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检 <button class="btn gray" onclick="refreshHealth()" style="float:right">重新检测</button></h3><pre style="font-size:11px;white-space:pre-wrap;color:var(--tx2)">'+E(JSON.stringify(d,null,2))+'</pre></div>';
  }).catch(function(e){
   clearInterval(anim);b.style.width='100%';s.textContent='请求失败';
   p.style.display='none';g.style.display='';
