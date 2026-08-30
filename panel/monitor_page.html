@@ -125,7 +125,7 @@ function refreshHealth(){
      b=document.getElementById('hlth-bar'),s=document.getElementById('hlth-status');
  g.style.display='none';p.style.display='block';b.style.width='0%';s.textContent='检测中…';
  var anim=setInterval(function(){var w=parseInt(b.style.width);if(w<90)b.style.width=Math.min(w+8,90)+'%';},400);
- fetch('/api/health').then(function(r){return r.json();}).then(function(d){
+ fetch('/api/healthtest').then(function(r){return r.json();}).then(function(d){
   clearInterval(anim);b.style.width='100%';s.textContent='检测完成';
   p.style.display='none';g.style.display='';
   g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检 <button class="btn gray" onclick="refreshHealth()" style="float:right">重新检测</button></h3><pre style="font-size:11px;white-space:pre-wrap;color:var(--tx2)">'+E(JSON.stringify(d,null,2))+'</pre></div>';
