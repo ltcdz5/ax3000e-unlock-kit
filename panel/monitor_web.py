@@ -24,7 +24,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 _DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 套件版本（单一来源，页脚展示；发版时与 release 号同步更新）
-KIT_VERSION = "2.0.0"
+KIT_VERSION = "2.1.0"
 
 
 def load_page():
