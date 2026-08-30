@@ -405,6 +405,12 @@ def do_action(action, params=None):
         if not raw.isdigit() or int(raw) < 100000 or not n.isdigit() or int(n) < 1000:
             sh("rm -f /tmp/hagezi_new.conf")
             return "下载未完成（%s 字节 / %s 条），已保留原 hagezi 列表" % (raw or "0", n or "0")
+        # 规则瘦身：只保留游戏/常用域名
+        KEEP = "steam|epicgames|battle|blizzard|origin|riotgames|microsoft|windowsupdate|doubleclick|googlead|facebook|twitter|ad.*baidu|qq.*com|taobao|tmall|alibaba|xiaomi|bilibili|youku|iqiyi|163.*com|sina|sohu|jd.*com|meituan|adservice|adnxs|openx|rubicon|pubmatic|appnexus|outbrain|taboola"
+        sh("mv /tmp/hagezi_new.conf /tmp/hagezi_new.conf.full; "
+           "grep -iE '" + KEEP + "' /tmp/hagezi_new.conf.full > /tmp/hagezi_new.conf; "
+           "rm -f /tmp/hagezi_new.conf.full")
+        n = sh("wc -l < /tmp/hagezi_new.conf 2>/dev/null").strip()
         sh("mv -f /tmp/hagezi_new.conf /tmp/dnsmasq.d/hagezi.conf; /etc/init.d/dnsmasq restart")
         return "hagezi 已更新: " + n + " 条"
     if action == "dnsmasq_restart":

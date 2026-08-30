@@ -674,6 +674,7 @@ def get_dns_stats():
 
 
 AD_SKIP = "byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance"
+AD_KEEP = "steam|epicgames|battle.*net|blizzard|origin|riotgames|microsoft|windowsupdate|doubleclick|googlead|google-analytics|googleapis|gstatic|facebook|twitter|amazon|ad.*baidu|qq.*com|taobao|tmall|alibaba|xiaomi|bilibili|youku|iqiyi|163.*com|sina|sohu|jd.*com|meituan|adservice|adnxs|adsrv|openx|rubicon|pubmatic|appnexus|outbrain|taboola"
 AWAVENUE_URLS = [
     "https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf",
     "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf",
@@ -693,7 +694,7 @@ def update_antiad():
     if not raw.isdigit() or int(raw) < 500000:
         sh("rm -f /tmp/antiad_raw")
         return "下载未完成（%s 字节），已保留原有 anti-AD 缓存" % (raw or "0")
-    sh("grep -vE '" + AD_SKIP + "' /tmp/antiad_raw > /tmp/antiad_new.conf")
+    sh("grep -vE '" + AD_SKIP + "' /tmp/antiad_raw | grep -iE '" + AD_KEEP + "' > /tmp/antiad_new.conf")
     # NXDOMAIN 化：0.0.0.0/空地址 → /#（客户端直接放弃，不再重试 AAAA/换协议，降低查询量）
     sh("sed -i -E '/^address=\\// { s|/0\\.0\\.0\\.0$|/#|; s|/$|/#| }' /tmp/antiad_new.conf")
     n = sh("wc -l < /tmp/antiad_new.conf 2>/dev/null").strip()

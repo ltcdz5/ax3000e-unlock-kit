@@ -14,6 +14,8 @@ antiad_url="https://anti-ad.net/anti-ad-for-dnsmasq.conf"
 awavenue_urls="https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf"
 # 抖音系一律豁免：本机实测屏蔽这些域名会让抖音视频取源掉进黑洞回退
 ad_skip="byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance"
+# 游戏/常用域名白名单（规则瘦身：只保留这些常见广告域名，其余丢弃降 CPU 负载）
+ad_keep="steam|epicgames|battle.*net|blizzard|origin|riotgames|ubi.*|minecraft|nvidia.*geforce|microsoft|windowsupdate|office.*com|live.*com|apple.*com|icloud|doubleclick|googlead|googlesyndication|google-analytics|googletagmanager|googleapis|gstatic|facebook.*com|fbcdn|twitter.*com|amazon.*com|amazonaws|cloudfront|ad.*baidu|bdstatic|qq.*com|weixin|tencent.*com|taobao.*com|tmall.*com|alibaba.*com|alipay.*com|xiaomi.*com|mi.*com|bilibili.*com|youku.*com|iqiyi.*com|douyu.*com|huya.*com|163.*com|sina.*com|sinaimg|sohu.*com|zhihu.*com|jd.*com|pinduoduo|meituan.*com|dianping.*com|ctrip.*com|sogou.*com|360.*cn|hao123.*com|adservice|adnxs|adsrv|adzerk|casalemedia|openx|rubicon|pubmatic|appnexus|outbrain|taboola|propellerads|popads|exoclick"
 
 stale() {  # 缓存缺失或超过 48 小时 → 需要联网刷新
     [ -s "$1" ] || return 0
@@ -66,10 +68,10 @@ unlock() {
 
 refresh_antiad() {
     curl -sL "$antiad_url" -o /tmp/antiad_raw --connect-timeout 15 --max-time 90
-    grep -vE "$ad_skip" /tmp/antiad_raw > /tmp/antiad_new 2>/dev/null
+    grep -vE "$ad_skip" /tmp/antiad_raw | grep -iE "$ad_keep" > /tmp/antiad_new 2>/dev/null
     rm -f /tmp/antiad_raw
     # 体积 + 条目数双重门槛：下载被截断或返回错误页时绝不覆盖在用的好列表
-    if [ "$(wc -c < /tmp/antiad_new 2>/dev/null)" -le 500000 ] || [ "$(wc -l < /tmp/antiad_new 2>/dev/null)" -le 1000 ]; then
+    if [ "$(wc -c < /tmp/antiad_new 2>/dev/null)" -le 10000 ] || [ "$(wc -l < /tmp/antiad_new 2>/dev/null)" -le 500 ]; then
         rm -f /tmp/antiad_new
         logger -t auto_ssh "anti-AD download invalid, keep cache"
         return 1
