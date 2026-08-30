@@ -3,7 +3,8 @@
 启动面板 HTTP 服务 → 内嵌浏览器窗口 → 托盘图标后台运行。
 依赖: pip install pywebview
 """
-import sys, os, threading, json, socket, urllib.request, webbrowser
+import sys, os, threading, json, socket, urllib.request, webbrowser, re
+from concurrent.futures import ThreadPoolExecutor
 
 # 添加上级目录到路径，使 panel 模块可导入
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -65,8 +66,6 @@ def main():
 
     # 如果没设 IP 则自动扫描
     if not router_ip:
-        import re
-        from concurrent.futures import ThreadPoolExecutor
         print("正在扫描路由器...")
         ip, hw = find_router()
         if ip:
