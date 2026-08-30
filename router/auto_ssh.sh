@@ -14,8 +14,13 @@ antiad_url="https://anti-ad.net/anti-ad-for-dnsmasq.conf"
 awavenue_urls="https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Dnsmasq.conf"
 # 抖音系一律豁免：本机实测屏蔽这些域名会让抖音视频取源掉进黑洞回退
 ad_skip="byteimg|pstatp|douyinpic|douyin|bytecdn|bytedance"
-# 游戏/常用域名白名单（规则瘦身：只保留这些常见广告域名，其余丢弃降 CPU 负载）
-ad_keep="steam|epicgames|battle.*net|blizzard|origin|riotgames|ubi.*|minecraft|nvidia.*geforce|microsoft|windowsupdate|office.*com|live.*com|apple.*com|icloud|doubleclick|googlead|googlesyndication|google-analytics|googletagmanager|googleapis|gstatic|facebook.*com|fbcdn|twitter.*com|amazon.*com|amazonaws|cloudfront|ad.*baidu|bdstatic|qq.*com|weixin|tencent.*com|taobao.*com|tmall.*com|alibaba.*com|alipay.*com|xiaomi.*com|mi.*com|bilibili.*com|youku.*com|iqiyi.*com|douyu.*com|huya.*com|163.*com|sina.*com|sinaimg|sohu.*com|zhihu.*com|jd.*com|pinduoduo|meituan.*com|dianping.*com|ctrip.*com|sogou.*com|360.*cn|hao123.*com|adservice|adnxs|adsrv|adzerk|casalemedia|openx|rubicon|pubmatic|appnexus|outbrain|taboola|propellerads|popads|exoclick"
+# 游戏/常用域名白名单（规则瘦身）
+ad_keep="steam|epicgames|battle.*net|blizzard|origin|riotgames|microsoft|windowsupdate|doubleclick|googlead|google-analytics|googleapis|gstatic|facebook|twitter|amazon|ad.*baidu|qq.*com|taobao|tmall|alibaba|xiaomi|bilibili|youku|iqiyi|163.*com|sina|sohu|jd.*com|meituan|adservice|adnxs|adsrv|openx|rubicon|pubmatic|appnexus|outbrain|taboola"
+# 游戏专用（只保留游戏平台/硬件厂商）
+ad_keep_game="steam|epicgames|battle.*net|blizzard|origin|riotgames|ubi.*|minecraft|nvidia.*geforce|microsoft|windowsupdate|doubleclick|googlead|adservice"
+# 去广告模式（full=全量 light=精简 game=游戏专用），通过 /data/.adblock_mode 持久化
+adblock_mode="light"
+[ -f /data/.adblock_mode ] && adblock_mode=$(cat /data/.adblock_mode)
 
 stale() {  # 缓存缺失或超过 48 小时 → 需要联网刷新
     [ -s "$1" ] || return 0
@@ -68,7 +73,12 @@ unlock() {
 
 refresh_antiad() {
     curl -sL "$antiad_url" -o /tmp/antiad_raw --connect-timeout 15 --max-time 90
-    grep -vE "$ad_skip" /tmp/antiad_raw | grep -iE "$ad_keep" > /tmp/antiad_new 2>/dev/null
+    # 根据模式选择过滤规则
+    case "$adblock_mode" in
+        full) grep -vE "$ad_skip" /tmp/antiad_raw > /tmp/antiad_new 2>/dev/null ;;
+        game) grep -vE "$ad_skip" /tmp/antiad_raw | grep -iE "$ad_keep_game" > /tmp/antiad_new 2>/dev/null ;;
+        *)    grep -vE "$ad_skip" /tmp/antiad_raw | grep -iE "$ad_keep" > /tmp/antiad_new 2>/dev/null ;;
+    esac
     rm -f /tmp/antiad_raw
     # 体积 + 条目数双重门槛：下载被截断或返回错误页时绝不覆盖在用的好列表
     if [ "$(wc -c < /tmp/antiad_new 2>/dev/null)" -le 10000 ] || [ "$(wc -l < /tmp/antiad_new 2>/dev/null)" -le 500 ]; then
@@ -137,6 +147,8 @@ apply_dns() {
     uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null
     # 纯统计日志（不含 log-queries，不记录每个查询，只接 SIGUSR1 转储供面板显示命中率）
     echo 'log-facility=/tmp/dnsquery.log' > /tmp/dnsmasq.d/93-stats.conf
+    # OTA 固件升级黑名单：DNS 黑洞，阻止小米升级服务器连接
+    echo 'address=/otapred.settings.auto/0.0.0.0' > /tmp/dnsmasq.d/99-block-ota.conf
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
     [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
     [ -s /data/microsoft.conf ] && cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf

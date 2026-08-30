@@ -758,6 +758,12 @@ def do_action(action, params=None):
         return update_antiad()
     if action == "adblock_update":
         return "anti-AD: " + update_antiad() + " ｜ AWAvenue: " + update_awavenue()
+    if action == "adblock_mode":
+        mode = params.get("mode", "light")
+        if mode not in ("full", "light", "game"):
+            return "模式必须是 full/light/game"
+        sh("echo '" + mode + "' > /data/.adblock_mode; rm -f /data/antiad.gz; /etc/init.d/dnsmasq restart")
+        return "去广告模式已切换为 " + mode + "（重启后生效，下次自动刷新时生效）"
     if action == "dnsmasq_restart":
         sh("/etc/init.d/dnsmasq restart")
         return "dnsmasq 已重启"

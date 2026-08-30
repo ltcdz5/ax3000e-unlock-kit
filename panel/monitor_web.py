@@ -26,6 +26,30 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 # 套件版本（单一来源，页脚展示；发版时与 release 号同步更新）
 KIT_VERSION = "2.1.0"
 
+# GitHub API 远程版本缓存（避免每次请求都调用 API）
+_REMOTE_VER = None
+_REMOTE_VER_TS = 0
+
+
+def get_remote_version():
+    """获取 GitHub 最新 release 版本号（缓存 10 分钟）"""
+    global _REMOTE_VER, _REMOTE_VER_TS
+    import time
+    now = time.time()
+    if _REMOTE_VER is not None and now - _REMOTE_VER_TS < 600:
+        return _REMOTE_VER
+    try:
+        import urllib.request, json
+        req = urllib.request.urlopen(
+            "https://api.github.com/repos/ltcdz5/xiaomi-router-unlock-kit/releases/latest",
+            timeout=5)
+        data = json.loads(req.read())
+        _REMOTE_VER = data.get("tag_name", "").lstrip("v")
+        _REMOTE_VER_TS = now
+        return _REMOTE_VER
+    except Exception:
+        return None
+
 
 def load_page():
     with open(os.path.join(_DIR, "monitor_page.html"), encoding="utf-8") as f:
@@ -186,6 +210,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"items": c["health_check"]()})
             except BrokenPipeError:
                 pass
+        elif p == "/api/version":
+            remote = get_remote_version()
+            self._send(200, {"local": KIT_VERSION, "latest": remote or KIT_VERSION,
+                             "update_available": remote is not None and remote != KIT_VERSION})
         elif p.startswith("/download/") and c.get("read_backup"):
             name = urllib.parse.unquote(p[len("/download/"):])
             blob = c["read_backup"](name)

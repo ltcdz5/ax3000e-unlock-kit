@@ -19,6 +19,12 @@ DEVICE_PROFILES = {
         "notes": "本套件实测基准",
     },
     # 新机型：用 deploy/device_probe.py 实机校准后在此添加条目
+    "BE3600": {
+        "name": "小米 BE3600", "soc": "", "firmware_pin": "",
+        "ssh_rsa_only": False,
+        "led_ctl": False,
+        "notes": "预适配占位，待实机校准",
+    },
 }
 
 # 机型识别源（AX3000E 实测：model=RN07，hardware/product_name 为空；

@@ -13,6 +13,23 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+# 套件版本（与 monitor_web.py 同步）
+KIT_VERSION = "2.1.0"
+
+# 检查 GitHub 最新版本
+def check_latest_version():
+    try:
+        req = urllib.request.urlopen(
+            "https://api.github.com/repos/ltcdz5/xiaomi-router-unlock-kit/releases/latest",
+            timeout=5)
+        data = json.loads(req.read())
+        latest = data.get("tag_name", "").lstrip("v")
+        if latest and latest != KIT_VERSION:
+            return latest
+    except Exception:
+        pass
+    return None
+
 P = argparse.ArgumentParser()
 P.add_argument("--fix", action="store_true", help="自动修复可修复项")
 P.add_argument("--ip", help="跳过扫描，直接指定路由器 IP")
@@ -100,6 +117,11 @@ def main():
     print("=" * 62)
     print("小米路由器解锁套件 · 一键体检")
     print("=" * 62)
+    print("套件版本: v%s" % KIT_VERSION)
+    latest = check_latest_version()
+    if latest:
+        print("⚠️  新版本 v%s 可用，请前往 GitHub 下载更新" % latest)
+    print()
 
     ip, hw = find_router()
     if not ip:
