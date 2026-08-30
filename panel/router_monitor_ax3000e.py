@@ -707,14 +707,14 @@ def do_action(action, params=None):
             return "LED 已开启"
     if action == "perf_optimize":
         out = sh(
-            "uci set dhcp.@dnsmasq[0].cachesize=2048; uci commit dhcp; "
+            "uci set dhcp.@dnsmasq[0].cachesize=4096; uci commit dhcp; "
             "echo 32768 > /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null; "
             "echo 2048 > /proc/sys/net/core/netdev_max_backlog 2>/dev/null; "
             "echo '4096 87380 16777216' > /proc/sys/net/ipv4/tcp_rmem 2>/dev/null; "
             "echo '4096 65536 16777216' > /proc/sys/net/ipv4/tcp_wmem 2>/dev/null; "
             "echo OK")
         sh("/etc/init.d/dnsmasq restart")
-        return "路由器优化已执行：DNS缓存 2048，连接跟踪 32768，网卡队列 2048，TCP缓冲区扩大"
+        return "路由器优化已执行：DNS缓存 4096，连接跟踪 32768，网卡队列 2048，TCP缓冲区扩大"
     if action == "backup":
         total = sh("uci show 2>/dev/null | wc -l")
         return "配置项共 " + total + " 行（完整配置在路由器 /etc/config/，本面板可查看摘要）"
@@ -979,7 +979,7 @@ function renderCfgBody(d){
     '<div class="row"><button class="btn" data-act="dns_speedtest">DNS 测速</button><button class="btn green" data-act="dns_fastest" data-confirm="用最快的4个上游并重启DNS？">一键用最快</button></div>'+
     '<div class="row">5G 功率 <select class="inp" id="pw5"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option><option value="8">8</option></select><button class="btn" data-act="wifi_power" data-band="5g" data-inp="pw5">设5G功率</button></div>'+
     '<div class="row">2.4G 功率 <select class="inp" id="pw2"><option value="28">28dBm 满</option><option value="24">24</option><option value="20">20</option><option value="16">16</option><option value="12">12</option><option value="8">8</option></select><button class="btn" data-act="wifi_power" data-band="2g" data-inp="pw2">设2.4G功率</button></div>',
-    '<button class="btn green" data-act="perf_optimize" data-confirm="一键优化路由器参数：DNS缓存→2048、连接跟踪→32768、网卡队列→2048、TCP缓冲区扩大。确认？">一键路由器优化</button>');
+    '<button class="btn green" data-act="perf_optimize" data-confirm="一键优化路由器参数：DNS缓存→4096、连接跟踪→32768、网卡队列→2048、TCP缓冲区扩大。确认？">一键路由器优化</button>');
   // 防火墙规则（高级）
   var fr='';
   d.fw_rules.forEach(function(x){
