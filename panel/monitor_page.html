@@ -75,7 +75,21 @@ a.dl:hover{text-decoration:underline}
 </div>
 <div id="tab-mon">
 ...
-<div id="tab-hlth" style="display:none"><div class="cfg-grid" id="hlth-grid">加载中…</div></div>
+<div id="tab-hlth" style="display:none">
+ <div class="cfg-grid" id="hlth-grid">
+  <div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:30px 0">
+   <h3>一键体检</h3>
+   <div class="desc" style="margin:12px 0">检查路由器固件、SSH、自愈、去广告、容量等关键状态</div>
+   <button class="btn green" onclick="refreshHealth()">开始检测</button>
+  </div>
+ </div>
+ <div id="hlth-progress" style="display:none;margin:16px auto;max-width:400px;text-align:center">
+  <div style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden">
+   <div id="hlth-bar" style="height:100%;width:0%;background:var(--acc);border-radius:3px;transition:width .3s"></div>
+  </div>
+  <div class="desc" id="hlth-status" style="margin-top:8px">检测中…</div>
+ </div>
+</div>
 <div class="cards">
  <div class="card"><div class="v num" id="c-cpu">--</div><div class="l">CPU 使用率</div><div class="s" id="s-cpu"></div></div>
  <div class="card"><div class="v num" id="c-mem">--</div><div class="l">内存 (已用/可用)</div><div class="s" id="s-mem"></div></div>
@@ -107,15 +121,22 @@ function switchTab(t){
  if(t==='hlth')refreshHealth();
 }
 function refreshHealth(){
- var g=document.getElementById('hlth-grid');g.innerHTML='加载中…';
+ var g=document.getElementById('hlth-grid'),p=document.getElementById('hlth-progress'),
+     b=document.getElementById('hlth-bar'),s=document.getElementById('hlth-status');
+ g.style.display='none';p.style.display='block';b.style.width='0%';s.textContent='检测中…';
+ var anim=setInterval(function(){var w=parseInt(b.style.width);if(w<90)b.style.width=Math.min(w+8,90)+'%';},400);
  fetch('/api/health').then(function(r){return r.json();}).then(function(d){
-  var h='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检</h3></div>';
+  clearInterval(anim);b.style.width='100%';s.textContent='检测完成';
+  var h='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检 <button class="btn gray" onclick="refreshHealth()" style="float:right">重新检测</button></h3></div>';
   (d.items||[]).forEach(function(it){
    h+='<div class="item"><span class="val">'+E(it.icon)+'</span><span>'+E(it.title)+'</span><span style="color:#7d8896">'+E(it.detail)+'</span></div>';
   });
   if(!d.items||!d.items.length)h+='<div class="desc">体检结果为空</div>';
-  g.innerHTML=h;
- }).catch(function(){g.innerHTML='<div class="desc">体检请求失败</div>';});
+  setTimeout(function(){p.style.display='none';g.style.display='';g.innerHTML=h;},500);
+ }).catch(function(e){
+  clearInterval(anim);b.style.width='100%';s.textContent='请求失败，请重试';
+  setTimeout(function(){p.style.display='none';g.style.display='';g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:30px 0"><h3>体检请求失败</h3><div class="desc" style="margin:12px 0">'+E(e.message||'路由器无响应')+'</div><button class="btn green" onclick="refreshHealth()">重试</button></div>';},800);
+ });
 }
 function B(action,label,p,cf,cls){
  return '<button class="btn '+(cls||'')+'" type="button" data-act="'+E(action)+'" data-p="'+E(JSON.stringify(p||{}))+'"'+(cf?' data-cf="'+E(cf)+'"':'')+'>'+label+'</button>';
