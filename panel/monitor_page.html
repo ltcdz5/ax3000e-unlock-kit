@@ -75,8 +75,14 @@ a.dl:hover{text-decoration:underline}
 </div>
 <div id="tab-mon">
 ...
-<div id="tab-hlth" style="display:none;height:100%">
- <iframe src="/healthpage" style="width:100%;height:80vh;border:none;background:transparent"></iframe>
+<div id="tab-hlth" style="display:none">
+ <div class="cfg-grid">
+  <div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:40px 0">
+   <h3>一键体检</h3>
+   <div class="desc" style="margin:16px 0">检查路由器固件、SSH、自愈、去广告、容量等关键状态</div>
+   <a href="/healthpage" target="_blank" class="btn green" style="display:inline-block;padding:10px 30px;text-decoration:none">在新标签页打开体检</a>
+  </div>
+ </div>
 </div>
 <div class="cards">
  <div class="card"><div class="v num" id="c-cpu">--</div><div class="l">CPU 使用率</div><div class="s" id="s-cpu"></div></div>
