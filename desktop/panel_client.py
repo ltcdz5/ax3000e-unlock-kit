@@ -3,7 +3,7 @@
 启动面板 HTTP 服务 → 内嵌浏览器窗口 → 托盘图标后台运行。
 依赖: pip install pywebview
 """
-import sys, os, threading, json, socket, urllib.request, webbrowser, re
+import sys, os, threading, json, socket, urllib.request, webbrowser, re, time
 from concurrent.futures import ThreadPoolExecutor
 
 # 添加上级目录到路径，使 panel 模块可导入
@@ -50,13 +50,29 @@ def fingerprint(ip):
 
 
 def start_panel():
-    """启动面板 HTTP 服务（子进程，独立窗口）"""
-    import subprocess
-    env = os.environ.copy()
-    proc = subprocess.Popen(
-        [sys.executable, PANEL_SCRIPT, "--host", router_ip, "--passwd", router_pass],
-        env=env, creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
-    return proc
+    """在后台线程启动面板 HTTP 服务"""
+    import panel.monitor_web as mw
+    import panel.router_monitor_ap as ap
+    # 设置环境变量
+    os.environ["ROUTER_HOST"] = router_ip
+    os.environ["ROUTER_PASSWD"] = router_pass
+    ap.HOST = router_ip
+    ap.PASSWD = router_pass
+    # 启动采集线程
+    t = threading.Thread(target=ap.collector_loop, daemon=True)
+    t.start()
+    time.sleep(2)
+    # 启动 HTTP 服务（阻塞，在后台线程运行）
+    t2 = threading.Thread(target=lambda: mw.serve({
+        "webport": WEBPORT, "host": router_ip,
+        "api": ap.api_snapshot, "get_config": ap.get_config,
+        "do_action": ap.do_action, "net_test": ap.run_net_test,
+        "dns_queries": ap.get_dns_queries, "dns_stats": ap.get_dns_stats,
+        "read_backup": ap.read_backup, "health_check": ap.get_health,
+        "ad_stats": ap.get_ad_stats,
+    }), daemon=True)
+    t2.start()
+    return None
 
 
 def gui_input(prompt, default=""):
@@ -89,11 +105,10 @@ def main():
     if not router_pass:
         router_pass = gui_input("请输入 SSH 密码", "admin")
 
-    # 启动面板进程
-    panel_proc = start_panel()
+    # 启动面板 HTTP 服务（后台线程）
+    start_panel()
 
     # 等待面板就绪
-    import time
     for i in range(30):
         try:
             with urllib.request.urlopen("http://127.0.0.1:%d/api" % WEBPORT, timeout=1):
@@ -102,17 +117,16 @@ def main():
             time.sleep(1)
     else:
         print("面板启动超时，请手动打开浏览器访问 http://127.0.0.1:%d" % WEBPORT)
-        panel_proc.wait()
         return
 
-    # 打开浏览器（没有 pywebview 时回退到系统浏览器）
+    # 打开浏览器
     try:
         import webview
         webview.create_window("小米路由器面板", "http://127.0.0.1:%d" % WEBPORT, width=1200, height=800)
         webview.start()
     except ImportError:
         webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
-        panel_proc.wait()
+        input("面板已启动，按回车退出...")
 
 
 if __name__ == "__main__":
