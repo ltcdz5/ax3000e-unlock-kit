@@ -122,7 +122,8 @@ function switchTab(t){
 }
 function refreshHealth(){
  var g=document.getElementById('hlth-grid');
- g.innerHTML='<div class="desc" style="padding:20px;text-align:center">加载中…</div>';
+ if(!g){document.body.innerHTML='<h1>ERROR: hlth-grid not found</h1>';return;}
+ g.innerHTML='<div class="desc" style="padding:20px;text-align:center;color:var(--acc)">加载中…</div>';
  fetch('/api/health').then(function(r){return r.json();}).then(function(d){
   var h='<div class="cfg-panel" style="grid-column:1/-1"><h3>一键体检 <button class="btn gray" onclick="refreshHealth()" style="float:right">刷新</button></h3></div>';
   (d.items||[]).forEach(function(it){
