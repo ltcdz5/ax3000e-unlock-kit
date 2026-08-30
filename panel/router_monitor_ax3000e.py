@@ -270,6 +270,7 @@ def get_config():
                          "src": d.get("src_ip", d.get("src", "")), "dest_port": d.get("dest_port", ""),
                          "proto": d.get("proto", ""), "family": d.get("family", "")})
     cfg["fw_rules"] = fw_rules
+    cfg["adstats"] = get_ad_stats()
     # LED 状态
     led_b = sh("uci get xiaoqiang.common.XLED 2>/dev/null")
     cfg["led_blue"] = led_b.strip() == "1"
@@ -651,6 +652,26 @@ def do_action(action, params=None):
     if action == "backup":
         cfg_out = sh("uci show 2>/dev/null | head -100")
         return "配置快照已获取（前 100 行），可查看"
+    if action == "svc_stop" or action == "svc_start":
+        name = params.get("name", "")
+        scripts = {"messagingagent": "messagingagent.sh", "mosquitto": "mosquitto", "xq_info_sync_mqtt": "xq_info_sync_mqtt"}
+        if name not in scripts:
+            return "未知服务"
+        if action == "svc_stop":
+            rc_links = {"messagingagent": "S49messagingagent.sh", "mosquitto": "S90mosquitto",
+                        "xq_info_sync_mqtt": "S99xq_info_sync_mqtt"}
+            sh("/etc/init.d/%s stop 2>/dev/null; killall %s 2>/dev/null; "
+               "ln -sf ../init.d/%s /etc/rc.d/%s 2>/dev/null" %
+               (scripts[name], name, scripts[name], rc_links.get(name, "")))
+            return "已停止 " + name + "（重启路由器后自动恢复）"
+        sh("/etc/init.d/%s start 2>/dev/null" % scripts[name])
+        return "已启动 " + name + "（若未起来请重启路由器）"
+    if action == "restart_panel":
+        import subprocess, webbrowser
+        subprocess.Popen([sys.executable] + sys.argv,
+                         creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
+        webbrowser.open("http://127.0.0.1:%s" % WEBPORT)
+        os._exit(0)
     return "未知操作"
 
 
@@ -792,13 +813,19 @@ document.addEventListener('click',function(e){
   if(b.dataset[k]){var el=document.getElementById(b.dataset[k]);if(el)params[k.replace('inp','')]=el.value;}
  });
  var actName=b.dataset.act;
- var doIt=function(){
-  var f=document.createElement('form');f.method='POST';f.action='/api/act';
-  var inp=document.createElement('input');inp.type='hidden';inp.name='json';
-  inp.value=JSON.stringify({action:actName,params:params});
-  f.appendChild(inp);document.body.appendChild(f);f.submit();
- };
- if(b.dataset.confirm){if(confirm(b.dataset.confirm)){if(b.dataset.confirmValue)params.confirm=b.dataset.confirmValue;doIt();}}else doIt();
+ var LONG={antiad_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',backup:'备份中…',restore:'恢复中…'};
+ var busy=LONG[actName];
+ if(b.dataset.confirm){if(confirm(b.dataset.confirm)){if(b.dataset.confirmValue)params.confirm=b.dataset.confirmValue;}else return;}
+ if(busy){b.disabled=true;b.dataset.orig=b.textContent;b.textContent=busy;}
+ fetch('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:actName,params:params})})
+ .then(function(r){return r.json();}).then(function(d){
+  showMsg(d.ok?('✅ '+d.msg):('❌ '+(d.error||'失败')));
+  if(d.ok)loadCfg(0);
+  if(busy){b.disabled=false;b.textContent=b.dataset.orig;}
+ }).catch(function(){
+  showMsg('操作失败：连接中断');
+  if(busy){b.disabled=false;b.textContent=b.dataset.orig;}
+ });
 });
 function E(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function renderCfgBody(d){
@@ -911,6 +938,75 @@ function post(body){
 
 # ---------- 服务层（与 AP 面板共享 monitor_web，认证/校验单一来源） ----------
 
+
+def get_health():
+    """一键体检（面板版）：单次 SSH 往返完成全部检查，返回 [{icon, title, detail}]。"""
+    items = []
+    def add(icon, title, detail=""):
+        items.append({"icon": icon, "title": title, "detail": detail})
+    raw = sh(
+        "curl -s --max-time 3 http://127.0.0.1/cgi-bin/luci/api/xqsystem/init_info 2>/dev/null; echo @@;"
+        "curl -s --max-time 3 http://127.0.0.1/cgi-bin/luci/api/xqsystem/upgrade_status 2>/dev/null; echo @@;"
+        "uci get otapred.settings.auto 2>/dev/null; echo @@;"
+        "test -f /data/auto_ssh/auto_ssh.sh && grep -c auto_ssh /etc/crontabs/root 2>/dev/null || echo 0; echo @@;"
+        "test -f /tmp/dnsmasq.d/96-antiad.conf && echo y || (test -f /tmp/dnsmasq.d/hagezi.conf && echo y || echo n); echo @@;"
+        "df /data | tail -n 1; echo @@;"
+        "ps w | grep -E 'messagingagent|mosquitto|xq_info_sync_mqtt' | grep -v grep | wc -l", timeout=20)
+    parts = raw.split("@@")
+    def seg(i):
+        return parts[i].strip() if i < len(parts) else ""
+    if not seg(0):
+        add("❌", "路由器连接", "SSH 不通")
+        return items
+    add("✅", "路由器连接", "SSH 在线")
+    import json
+    try:
+        info = json.loads(seg(0))
+        rv = info.get("romversion", "?")
+        add("✅" if rv == "1.0.24" else "⚠️", "固件版本", "%s（%s）" % (rv, "实测基准" if rv == "1.0.24" else "校准后可用"))
+        if seg(1):
+            u = json.loads(seg(1))
+            add("✅" if u.get("status") == 0 else "⚠️", "固件升级",
+                "无新版本" if u.get("status") == 0 else "告警：有新固件，切勿升级")
+    except Exception:
+        add("ℹ️", "固件版本", "读取失败")
+    auto = seg(2)
+    add("✅" if auto == "0" else "⚠️", "自动升级", "已关闭" if auto == "0" else "仍开启")
+    heal = seg(3)
+    add("✅" if heal.isdigit() and int(heal) >= 1 else "⚠️",
+        "三层自愈", "已安装" if heal.isdigit() and int(heal) >= 1 else "未装全")
+    ad = seg(4)
+    add("✅" if ad == "y" else "⚠️", "去广告列表", "已加载" if ad == "y" else "未加载")
+    df = seg(5).split()
+    free = df[-3] if len(df) >= 4 else "?"
+    ok = free.isdigit() and int(free) >= 200
+    add("✅" if ok else "⚠️", "/data 容量", "%sK 剩余" % free)
+    svc = seg(6)
+    add("✅" if svc.strip() == "0" else "ℹ️", "米家云服务", "已精简" if svc.strip() == "0" else "运行中")
+    return items
+
+
+def get_ad_stats():
+    """去广告统计：列表规模、今日拦截数、拦截率。单次 SSH 往返。"""
+    raw = sh(
+        "wc -l /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/hagezi.conf 2>/dev/null | tail -n 1; echo @@;"
+        "grep -c 'is 0\\.0\\.0\\.0' /tmp/dnsquery.log 2>/dev/null || echo 0; echo @@;"
+        "grep -c 'query\\[' /tmp/dnsquery.log 2>/dev/null || echo 0; echo @@;"
+        "grep -c cached /tmp/dnsquery.log 2>/dev/null || echo 0", timeout=15)
+    parts = raw.split("@@")
+    def seg(i):
+        return parts[i].strip() if i < len(parts) else ""
+    total = seg(0).split()[0] if seg(0) else "0"
+    blocked = seg(1)
+    queries = seg(2)
+    cached = seg(3)
+    rate = 0
+    if queries.isdigit() and int(queries) > 0:
+        rate = round(int(blocked or "0") * 100.0 / int(queries) * 100, 1)
+    return {"total_domains": total, "blocked_today": blocked or "0",
+            "total_queries": queries or "0", "cached": cached or "0", "block_rate": rate}
+
+
 def api_snapshot():
     with data_lock:
         return {"cpu": list(history["cpu"]), "mem_used_mb": list(history["mem_used_mb"]),
@@ -954,7 +1050,8 @@ def main():
     print("  路由器: " + USER + "@" + HOST + ":" + str(SSHPORT) + "  (Ctrl+C 停止)")
     monitor_web.serve({"webport": WEBPORT, "lan": a.lan, "token": a.token,
                        "page": _page, "api": api_snapshot,
-                       "get_config": get_config, "do_action": do_action})
+                       "get_config": get_config, "do_action": do_action,
+                       "health_check": get_health, "ad_stats": get_ad_stats})
 
 
 if __name__ == "__main__":
