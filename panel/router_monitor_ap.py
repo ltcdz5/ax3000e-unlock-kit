@@ -845,6 +845,9 @@ def do_action(action, params=None):
             return "功率须 0-30 dBm"
         sh("iwconfig " + ifname + " txpower " + pw + "dBm")
         return "WiFi " + band + " 功率已设为 " + pw + " dBm（即时生效，重启恢复）"
+    if action == "wifi_scan":
+        raw = sh("for iface in wl0 wl1; do echo ===$iface; iw dev $iface scan 2>/dev/null | grep -E 'freq|signal|SSID' | head -30; done", timeout=20)
+        return raw[:2000] if raw else "扫描无结果"
     if action == "net_test":
         return run_net_test()
     if action == "cron_add":
@@ -947,6 +950,10 @@ def do_action(action, params=None):
         return "备份失败：请检查 SSH 连接后重试"
     if action == "restore":
         return restore_backup(params.get("name", ""))
+    if action == "dns_cache_tune":
+        s = str(int(params.get("size", 4096)))
+        sh("uci set dhcp.@dnsmasq[0].cachesize='" + s + "'; uci commit dhcp; /etc/init.d/dnsmasq restart")
+        return "DNS 缓存已设为 " + s + " 条"
     if action == "reboot":
         if params.get("confirm") != "yes":
             return "已取消：需确认（confirm=yes）才执行重启"

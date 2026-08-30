@@ -182,7 +182,7 @@ function renderCfg(c){
   row:B('dnsmasq_restart','重启 DNS 服务',{},'','gray')}));
  h.push(card({title:'DNS 缓存',tip:'512-4096 合适。命中率越高解析越快（自上次开机累计）。',
   desc:'命中率 <b id="dns-hitrate" class="num">测量中…</b> <span id="dns-hitrate-detail" style="color:#7d8896"></span>',
-  body:inpRow(['<input class="inp num" id="cache-size" value="'+E(c.cache_size)+'">',B('cache_save','保存',{},'',''),'<button class="btn gray" type="button" onclick="refreshHitrate()">刷新命中率</button>'])}));
+  body:inpRow(['<input class="inp num" id="cache-size" value="'+E(c.cache_size)+'">',B('cache_save','保存',{},'',''),'<button class="btn gray" type="button" onclick="refreshHitrate()">刷新命中率</button>',B('dns_cache_tune','一键4096',{size:4096},'','green')])}));
  var ads=c.adstats||{}; var r=ads.block_rate||0;
  h.push(card({title:'去广告统计',tip:'自上次开机累计。',
   desc:'<span class="val">'+E(ads.total_domains||'0')+'</span> 条规则 · 拦截 <span class="val">'+E(ads.blocked_today||'0')+'</span> 次 · 缓存 <span class="val">'+E(ads.cached||'0')+'</span> 条 · 拦截率 <span class="val">'+(r>0?r+'%':'<1%')+'</span>'}));
@@ -200,7 +200,8 @@ function renderCfg(c){
  h.push(card({title:'WiFi 信道',tip:'即时切换不断网；重启后恢复自动。5G 推荐 36/149，2.4G 推荐 1/6/11。',
   desc:'5G: '+E(w.a_ssid)+' 信道'+(aCh==='0'?'自动':aCh)+' · 2.4G: '+E(w.g_ssid)+(String(w.g_disabled)==='1'?' <span class="badge off">已禁用</span>':' 信道'+(gCh==='0'?'自动':gCh)),
   body:inpRow(['5G',sel('a-ch',[36,40,44,48,149,153,157,161],aCh),B('wifi_channel','切换5G信道',{band:'5g',channel:'@a-ch'},'','')])+
-        inpRow(['2.4G',sel('g-ch',[1,6,11,3,9,13],gCh),B('wifi_channel','切换2.4G信道',{band:'2g',channel:'@g-ch'},'','')])}));
+        inpRow(['2.4G',sel('g-ch',[1,6,11,3,9,13],gCh),B('wifi_channel','切换2.4G信道',{band:'2g',channel:'@g-ch'},'','')]),
+  row:B('wifi_scan','扫描信道',{},'扫描当前信道占用情况（约需5秒）','gray')}));
  h.push(card({title:'WiFi 功率',tip:'28dBm 为满功率(约630mW)，按需调低可省电降温。',
   body:inpRow(['5G',sel('a-pw',[28,24,20,16,12],w.a_power||28),B('wifi_power','设5G功率',{band:'5g',power:'@a-pw'},'','')])+
         inpRow(['2.4G',sel('g-pw',[28,24,20,16,12],w.g_power||28),B('wifi_power','设2.4G功率',{band:'2g',power:'@g-pw'},'','')])}));
