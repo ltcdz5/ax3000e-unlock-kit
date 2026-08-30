@@ -624,6 +624,27 @@ def get_health():
     return items
 
 
+def get_ad_stats():
+    """去广告统计：列表规模、今日拦截数、拦截率。单次 SSH 往返。"""
+    raw = sh(
+        "wc -l /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/90-awavenue.conf 2>/dev/null | tail -n 1; echo @@;"
+        "grep -c 'is 0\\.0\\.0\\.0' /tmp/dnsquery.log 2>/dev/null || echo 0; echo @@;"
+        "grep -c 'query\\[' /tmp/dnsquery.log 2>/dev/null || echo 0; echo @@;"
+        "grep -c cached /tmp/dnsquery.log 2>/dev/null || echo 0", timeout=15)
+    parts = raw.split("@@")
+    def seg(i):
+        return parts[i].strip() if i < len(parts) else ""
+    total = seg(0).split()[0] if seg(0) else "0"
+    blocked = seg(1)
+    queries = seg(2)
+    cached = seg(3)
+    rate = 0
+    if queries.isdigit() and int(queries) > 0:
+        rate = round(int(blocked or "0") * 100.0 / int(queries) * 100, 1)
+    return {"total_domains": total, "blocked_today": blocked or "0",
+            "total_queries": queries or "0", "cached": cached or "0", "block_rate": rate}
+
+
 def get_dns_stats():
     """dnsmasq 内置统计（SIGUSR1 转储）。等待放在路由器侧：出现新转储行即刻返回，
     固定 sleep 在负载高时会读到上一次的旧统计。"""
@@ -1024,7 +1045,7 @@ def main():
                        "api": api_snapshot, "get_config": get_config, "do_action": do_action,
                        "net_test": run_net_test, "dns_queries": get_dns_queries,
                        "dns_stats": get_dns_stats, "read_backup": read_backup,
-                       "health_check": get_health})
+                       "health_check": get_health, "ad_stats": get_ad_stats})
 
 
 if __name__ == "__main__":

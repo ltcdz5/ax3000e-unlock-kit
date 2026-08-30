@@ -163,6 +163,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, stats if stats else {"ok": False, "error": "未读到 dnsmasq 统计"})
         elif p == "/api/healthtest":
             self._send(200, {"items": [{"icon": "✅", "title": "测试项", "detail": "API 正常"}]})
+        elif p == "/api/adstats" and c.get("ad_stats"):
+            self._send(200, c["ad_stats"]())
         elif p == "/api/health" and c.get("health_check"):
             try:
                 self._send(200, {"items": c["health_check"]()})
