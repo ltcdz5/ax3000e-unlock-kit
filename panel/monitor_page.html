@@ -132,10 +132,11 @@ function refreshHealth(){
    h+='<div class="item"><span class="val">'+E(it.icon)+'</span><span>'+E(it.title)+'</span><span style="color:#7d8896">'+E(it.detail)+'</span></div>';
   });
   if(!d.items||!d.items.length)h+='<div class="desc">体检结果为空</div>';
-  setTimeout(function(){p.style.display='none';g.style.display='';g.innerHTML=h;},500);
+  p.style.display='none';g.style.display='';g.innerHTML=h;
  }).catch(function(e){
-  clearInterval(anim);b.style.width='100%';s.textContent='请求失败，请重试';
-  setTimeout(function(){p.style.display='none';g.style.display='';g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:30px 0"><h3>体检请求失败</h3><div class="desc" style="margin:12px 0">'+E(e.message||'路由器无响应')+'</div><button class="btn green" onclick="refreshHealth()">重试</button></div>';},800);
+  clearInterval(anim);b.style.width='100%';s.textContent='请求失败';
+  p.style.display='none';g.style.display='';
+  g.innerHTML='<div class="cfg-panel" style="grid-column:1/-1;text-align:center;padding:30px 0"><h3>请求失败</h3><div class="desc" style="margin:12px 0">'+E(e.message||'路由器无响应')+'</div><button class="btn green" onclick="refreshHealth()">重试</button></div>';
  });
 }
 function B(action,label,p,cf,cls){
