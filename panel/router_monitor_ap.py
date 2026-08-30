@@ -931,9 +931,10 @@ def do_action(action, params=None):
         sh("/etc/init.d/%s start 2>/dev/null" % scripts[name])
         return "已启动 " + name + "（若未起来请重启路由器）"
     if action == "restart_panel":
-        import subprocess
+        import subprocess, webbrowser
         subprocess.Popen([sys.executable] + sys.argv,
                          creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
+        webbrowser.open("http://127.0.0.1:%s" % WEBPORT)
         os._exit(0)
     return "未知操作"
 
