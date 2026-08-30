@@ -161,8 +161,13 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/dnshitrate" and c.get("dns_stats"):
             stats = c["dns_stats"]()
             self._send(200, stats if stats else {"ok": False, "error": "未读到 dnsmasq 统计"})
+        elif p == "/api/healthtest":
+            self._send(200, {"items": [{"icon": "✅", "title": "测试项", "detail": "API 正常"}]})
         elif p == "/api/health" and c.get("health_check"):
-            self._send(200, {"items": c["health_check"]()})
+            try:
+                self._send(200, {"items": c["health_check"]()})
+            except BrokenPipeError:
+                pass
         elif p.startswith("/download/") and c.get("read_backup"):
             name = urllib.parse.unquote(p[len("/download/"):])
             blob = c["read_backup"](name)
