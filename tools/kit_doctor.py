@@ -119,6 +119,19 @@ def main():
     else:
         say("⚠️", "固件 %s（非实测基准 1.0.24）" % rom, "≤1.0.24 理论可用需校准；更高版本解锁可能失效")
 
+    # 固件升级状态（零凭据）
+    try:
+        up = json.loads(urllib.request.urlopen(
+            "http://%s/cgi-bin/luci/api/xqsystem/upgrade_status" % ip, timeout=3).read())
+        if up.get("status") == 0:
+            say("✅", "固件升级状态：无新版本（当前 1.0.24 为最新）")
+        else:
+            say("⚠️", "固件升级状态异常（status=%s）" % up.get("status"),
+                "可能有新固件推送——升级固件=解锁全部报废，切勿升级；体检 --fix 已关闭自动升级")
+            MANUAL.append("确认勿手动升级固件")
+    except Exception:
+        pass
+
     # SSH
     ssh_ok = port_open(ip, 22)
     if ssh_ok:
