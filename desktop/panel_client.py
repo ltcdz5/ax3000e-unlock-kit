@@ -1,23 +1,32 @@
 # -*- coding: utf-8 -*-
 """小米路由器解锁套件 · 桌面客户端
-启动面板 HTTP 服务 → 内嵌浏览器窗口 → 托盘图标后台运行。
-依赖: pip install pywebview
+启动面板 HTTP 服务 → 打开系统浏览器。
+免 pywebview 依赖，PyInstaller 打包更稳定。
 """
-import sys, os, threading, json, socket, urllib.request, webbrowser, re, time
+import sys, os, threading, json, socket, urllib.request, webbrowser, re, time, traceback
 from concurrent.futures import ThreadPoolExecutor
 
 # 添加上级目录或 PyInstaller 打包目录到路径
 if getattr(sys, 'frozen', False):
-    sys.path.insert(0, sys._MEIPASS)
+    _BASE = sys._MEIPASS
+    sys.path.insert(0, _BASE)
 else:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    _BASE = os.path.join(os.path.dirname(__file__), "..")
+    sys.path.insert(0, _BASE)
 
 WEBPORT = 8787
-PANEL_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "panel", "router_monitor_ap.py")
+_LOG = os.path.join(os.path.expanduser("~"), "Desktop", "panel_error.log")
+
+
+def _log(txt):
+    try:
+        with open(_LOG, "a", encoding="utf-8") as f:
+            f.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), txt))
+    except Exception:
+        pass
 
 
 def find_router():
-    """零凭据扫描局域网内的 AX3000E (RN07)"""
     for ip in [getattr(find_router, "_ip", None)] if hasattr(find_router, "_ip") else []:
         pass
     cands = ["192.168.31.1", "192.168.2.106", "192.168.2.105", "192.168.2.100"]
@@ -52,40 +61,7 @@ def fingerprint(ip):
         return None
 
 
-def start_panel():
-    """在后台线程启动面板 HTTP 服务"""
-    # panel 模块使用 import monitor_web 而非 from . import monitor_web
-    # 所以需要把 panel 目录加入 sys.path
-    panel_dir = os.path.join(os.path.dirname(__file__))
-    if getattr(sys, 'frozen', False):
-        panel_dir = sys._MEIPASS
-    sys.path.insert(0, os.path.join(panel_dir, "panel"))
-    import panel.monitor_web as mw
-    import panel.router_monitor_ap as ap
-    # 设置环境变量
-    os.environ["ROUTER_HOST"] = router_ip
-    os.environ["ROUTER_PASSWD"] = router_pass
-    ap.HOST = router_ip
-    ap.PASSWD = router_pass
-    # 启动采集线程
-    t = threading.Thread(target=ap.collector_loop, daemon=True)
-    t.start()
-    time.sleep(2)
-    # 启动 HTTP 服务（阻塞，在后台线程运行）
-    t2 = threading.Thread(target=lambda: mw.serve({
-        "webport": WEBPORT, "host": router_ip,
-        "api": ap.api_snapshot, "get_config": ap.get_config,
-        "do_action": ap.do_action, "net_test": ap.run_net_test,
-        "dns_queries": ap.get_dns_queries, "dns_stats": ap.get_dns_stats,
-        "read_backup": ap.read_backup, "health_check": ap.get_health,
-        "ad_stats": ap.get_ad_stats,
-    }), daemon=True)
-    t2.start()
-    return None
-
-
 def gui_input(prompt, default=""):
-    """GUI 输入框（窗口化 exe 没有 stdin 时的替代）"""
     try:
         import tkinter as tk
         from tkinter import simpledialog
@@ -96,27 +72,53 @@ def gui_input(prompt, default=""):
         return default
 
 
+def start_panel():
+    """在后台线程启动面板 HTTP 服务（直接 import 模块，不走 panel.xxx 包路径）"""
+    # 把 panel 目录加进 sys.path，让 router_monitor_ap.py 能 import monitor_web
+    panel_dir = os.path.join(_BASE, "panel")
+    sys.path.insert(0, panel_dir)
+    import monitor_web as mw
+    import router_monitor_ap as ap
+    os.environ["ROUTER_HOST"] = router_ip
+    os.environ["ROUTER_PASSWD"] = router_pass
+    ap.HOST = router_ip
+    ap.PASSWD = router_pass
+    t = threading.Thread(target=ap.collector_loop, daemon=True)
+    t.start()
+    time.sleep(2)
+    t2 = threading.Thread(target=lambda: mw.serve({
+        "webport": WEBPORT, "host": router_ip,
+        "api": ap.api_snapshot, "get_config": ap.get_config,
+        "do_action": ap.do_action, "net_test": ap.run_net_test,
+        "dns_queries": ap.get_dns_queries, "dns_stats": ap.get_dns_stats,
+        "read_backup": ap.read_backup, "health_check": ap.get_health,
+        "ad_stats": ap.get_ad_stats,
+    }), daemon=True)
+    t2.start()
+
+
 def main():
     global router_ip, router_pass
     try:
         router_ip = os.environ.get("ROUTER_HOST", "")
         router_pass = os.environ.get("ROUTER_PASSWD", "")
 
-        # 如果没设 IP 则自动扫描
         if not router_ip:
+            _log("扫描路由器...")
             ip, hw = find_router()
             if ip:
                 router_ip = ip
+                _log("发现 %s (%s)" % (ip, hw))
             else:
                 router_ip = gui_input("未发现路由器，请输入路由器 IP", "192.168.2.106")
+                _log("手动输入 IP: %s" % router_ip)
 
         if not router_pass:
             router_pass = gui_input("请输入 SSH 密码", "admin")
 
-        # 启动面板 HTTP 服务（后台线程）
+        _log("启动面板服务...")
         start_panel()
 
-        # 等待面板就绪
         for i in range(30):
             try:
                 with urllib.request.urlopen("http://127.0.0.1:%d/api" % WEBPORT, timeout=1):
@@ -124,33 +126,19 @@ def main():
             except Exception:
                 time.sleep(1)
         else:
-            _errbox("面板启动超时", "请手动打开浏览器访问 http://127.0.0.1:%d" % WEBPORT)
+            _log("面板启动超时")
+            webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
             return
 
-        # 打开内嵌浏览器
-        try:
-            import webview
-            webview.create_window("小米路由器面板", "http://127.0.0.1:%d" % WEBPORT, width=1200, height=800)
-            webview.start()
-        except Exception as e:
-            # webview 不可用时降级到系统浏览器
-            webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
-            _errbox("面板已启动", "浏览器已打开 http://127.0.0.1:%d\n（%s）" % (WEBPORT, e))
+        _log("面板就绪，打开浏览器")
+        webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
+
+        # 保持进程存活（浏览器关闭后面板仍需运行）
+        while True:
+            time.sleep(60)
     except Exception as e:
-        _errbox("启动失败", str(e))
-
-
-def _errbox(title, msg):
-    """错误提示弹窗（窗口化 exe 无控制台时的替代）"""
-    try:
-        import tkinter as tk
-        from tkinter import messagebox
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror(title, msg)
-        root.destroy()
-    except Exception:
-        pass
+        _log("崩溃: %s" % traceback.format_exc())
+        raise
 
 
 if __name__ == "__main__":
