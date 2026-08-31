@@ -20,10 +20,10 @@ DEVICE_PROFILES = {
     },
     # 新机型：用 deploy/device_probe.py 实机校准后在此添加条目
     "BE3600": {
-        "name": "小米 BE3600", "soc": "", "firmware_pin": "",
-        "ssh_rsa_only": False,
-        "led_ctl": False,
-        "notes": "预适配占位，待实机校准",
+        "name": "小米 BE3600 2.5G", "soc": "IPQ5312（四核 A53）", "firmware_pin": "1.0.81",
+        "ssh_rsa_only": False,   # 较新 dropbear，支持 rsa-sha2
+        "led_ctl": False,        # 待实机验证
+        "notes": "预适配占位，待实机校准；v1.0.87 修复了注入漏洞需先降级；256MB RAM / 128MB NAND",
     },
 }
 
