@@ -98,44 +98,59 @@ def gui_input(prompt, default=""):
 
 def main():
     global router_ip, router_pass
-    router_ip = os.environ.get("ROUTER_HOST", "")
-    router_pass = os.environ.get("ROUTER_PASSWD", "")
-
-    # 如果没设 IP 则自动扫描
-    if not router_ip:
-        print("正在扫描路由器...")
-        ip, hw = find_router()
-        if ip:
-            router_ip = ip
-            print("发现路由器 %s (%s)" % (ip, hw))
-        else:
-            router_ip = gui_input("未发现路由器，请输入路由器 IP", "192.168.2.106")
-
-    if not router_pass:
-        router_pass = gui_input("请输入 SSH 密码", "admin")
-
-    # 启动面板 HTTP 服务（后台线程）
-    start_panel()
-
-    # 等待面板就绪
-    for i in range(30):
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:%d/api" % WEBPORT, timeout=1):
-                break
-        except Exception:
-            time.sleep(1)
-    else:
-        print("面板启动超时，请手动打开浏览器访问 http://127.0.0.1:%d" % WEBPORT)
-        return
-
-    # 打开浏览器
     try:
-        import webview
-        webview.create_window("小米路由器面板", "http://127.0.0.1:%d" % WEBPORT, width=1200, height=800)
-        webview.start()
-    except ImportError:
-        webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
-        input("面板已启动，按回车退出...")
+        router_ip = os.environ.get("ROUTER_HOST", "")
+        router_pass = os.environ.get("ROUTER_PASSWD", "")
+
+        # 如果没设 IP 则自动扫描
+        if not router_ip:
+            ip, hw = find_router()
+            if ip:
+                router_ip = ip
+            else:
+                router_ip = gui_input("未发现路由器，请输入路由器 IP", "192.168.2.106")
+
+        if not router_pass:
+            router_pass = gui_input("请输入 SSH 密码", "admin")
+
+        # 启动面板 HTTP 服务（后台线程）
+        start_panel()
+
+        # 等待面板就绪
+        for i in range(30):
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:%d/api" % WEBPORT, timeout=1):
+                    break
+            except Exception:
+                time.sleep(1)
+        else:
+            _errbox("面板启动超时", "请手动打开浏览器访问 http://127.0.0.1:%d" % WEBPORT)
+            return
+
+        # 打开内嵌浏览器
+        try:
+            import webview
+            webview.create_window("小米路由器面板", "http://127.0.0.1:%d" % WEBPORT, width=1200, height=800)
+            webview.start()
+        except Exception as e:
+            # webview 不可用时降级到系统浏览器
+            webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
+            _errbox("面板已启动", "浏览器已打开 http://127.0.0.1:%d\n（%s）" % (WEBPORT, e))
+    except Exception as e:
+        _errbox("启动失败", str(e))
+
+
+def _errbox(title, msg):
+    """错误提示弹窗（窗口化 exe 无控制台时的替代）"""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(title, msg)
+        root.destroy()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
