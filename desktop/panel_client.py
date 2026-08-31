@@ -3,7 +3,7 @@
 启动面板 HTTP 服务 → 打开系统浏览器。
 免 pywebview 依赖，PyInstaller 打包更稳定。
 """
-import sys, os, threading, json, socket, urllib.request, webbrowser, re, time, traceback
+import sys, os, threading, json, socket, urllib.request, re, time, traceback
 from concurrent.futures import ThreadPoolExecutor
 
 # 添加上级目录或 PyInstaller 打包目录到路径
@@ -127,13 +127,13 @@ def main():
                 time.sleep(1)
         else:
             _log("面板启动超时")
-            webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
+            os.startfile("http://127.0.0.1:%d" % WEBPORT)
             return
 
         _log("面板就绪，打开浏览器")
-        webbrowser.open("http://127.0.0.1:%d" % WEBPORT)
+        os.startfile("http://127.0.0.1:%d" % WEBPORT)
 
-        # 保持进程存活（浏览器关闭后面板仍需运行）
+        # 保持进程存活（后台面板服务需要持续运行）
         while True:
             time.sleep(60)
     except Exception as e:
