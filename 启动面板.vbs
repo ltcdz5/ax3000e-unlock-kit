@@ -13,7 +13,7 @@ RouterIP = "192.168.2.106"
 RouterPass = "admin"
 
 ' 后台启动面板（隐藏窗口）
-WshShell.Run "python """ & ScriptDir & "\panel\router_monitor_ap.py"" --host " & RouterIP & " --passwd " & RouterPass, 0, False
+WshShell.Run """C:\Users\xutengfa\AppData\Local\Programs\Python\Python312\python.exe"" """ & ScriptDir & "\panel\router_monitor_ap.py"" --host " & RouterIP & " --passwd " & RouterPass, 0, False
 
 ' 等待面板启动
 WScript.Sleep 5000
