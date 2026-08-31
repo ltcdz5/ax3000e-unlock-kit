@@ -985,6 +985,23 @@ def do_action(action, params=None):
                          creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
         webbrowser.open("http://127.0.0.1:%s" % WEBPORT)
         os._exit(0)
+    if action == "wol":
+        mac = params.get("mac", "").strip().lower()
+        if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", mac):
+            return "MAC 格式须为 aa:bb:cc:dd:ee:ff"
+        import socket, struct
+        parts = mac.split(":")
+        data = b"\xff" * 6 + struct.pack("!6B", *[int(p, 16) for p in parts]) * 16
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.sendto(data, ("255.255.255.255", 9))
+        s.close()
+        return "已发送 WOL 魔术包到 " + mac
+    if action == "syslog":
+        lines = int(params.get("lines", 100))
+        raw = sh("tail -n " + str(lines) + " /var/log/messages 2>/dev/null || "
+                 "tail -n " + str(lines) + " /tmp/messages 2>/dev/null || echo '日志文件不存在'", timeout=10)
+        return raw[:5000]
     return "未知操作"
 
 

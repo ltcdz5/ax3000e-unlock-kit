@@ -205,7 +205,7 @@ function renderCfg(c){
  h.push(card({title:'WiFi 功率',tip:'28dBm 为满功率(约630mW)，按需调低可省电降温。',
   body:inpRow(['5G',sel('a-pw',[28,24,20,16,12],w.a_power||28),B('wifi_power','设5G功率',{band:'5g',power:'@a-pw'},'','')])+
         inpRow(['2.4G',sel('g-pw',[28,24,20,16,12],w.g_power||28),B('wifi_power','设2.4G功率',{band:'2g',power:'@g-pw'},'','')])}));
- var devs=(c.devices||[]).map(function(x){return item('<span class="val">'+E(x.host||'')+'</span>','<span class="val">'+E(x.ip)+'</span><span style="color:#7d8896">'+E(x.mac)+'</span><span class="'+(x.state==='REACHABLE'?'ok':'warn')+'">'+E(x.state)+'</span>');});
+ var devs=(c.devices||[]).map(function(x){return item('<span class="val">'+E(x.host||'')+'</span>','<span class="val">'+E(x.ip)+'</span><span style="color:#7d8896">'+E(x.mac)+'</span><span class="'+(x.state==='REACHABLE'?'ok':'warn')+'">'+E(x.state)+'</span>'+B('wol','唤醒',{mac:x.mac},'发送 WOL 魔术包到 '+E(x.mac)+' 吗？','gray'));});
  h.push(card({title:'在线设备',badge:(c.devices||[]).length+' 台',tip:'实时 ARP 邻居表。DHCP 由上级路由分配，主机名仅在有租约时显示。',body:lst(devs,'暂无设备')}));
  h.push(card({title:'DNS 查询记录 <span class="badge on">实时</span>',tip:'各设备最近 DNS 查询（每 3 秒刷新）。日志超 300KB 自动清空。不查记录时可关闭日志，降低 dnsmasq CPU 开销（持久生效）。',
   desc:'<span id="dq-count">最近 0 条查询</span>',body:'<div class="list" id="dq-list"></div>',
@@ -219,6 +219,8 @@ function renderCfg(c){
   tip:'当前计划：'+E(sc.on||'--:--')+' 开灯 / '+E(sc.off||'--:--')+' 关灯（定时会覆盖手动操作）。',
   body:inpRow([B('led_toggle',(c.led_blue?'关灯':'开灯'),{},'','')])+
         inpRow(['开灯 <input class="inp num" id="led-on" value="'+E(sc.on||'08:00')+'" style="width:78px">','关灯 <input class="inp num" id="led-off" value="'+E(sc.off||'00:00')+'" style="width:78px">',B('led_save','更新定时',{},'','gray')])}));
+th.push(card({title:'系统日志',tip:'读取路由器 /var/log/messages 尾部。内核/服务/网络/错误信息均在此记录，排查问题时查看。',
+	  body:'<div class="row"><button class="btn gray" type="button" onclick="loadSyslog()">加载日志</button></div><div class="list" id="syslog-list" style="max-height:300px;font-family:Consolas,monospace;font-size:11px;line-height:1.5"></div>'}));
  h.push(card({title:'DNS 测速优化',tip:'对候选池测速，启用国内4+国外4，all-servers 并行取最快。',
   row:B('dns_speedtest','DNS 测速',{},'','gray')+B('dns_fastest','常见DNS优选',{},'测速候选池并启用 国内4+国外4？约需十几秒，当前上游会被替换。','')}));
  h.push(card({title:'实时测试',tip:'测速跳转中科大（新窗口）；实时测试查延迟/DNS/设备链路（约5秒）。',
@@ -335,6 +337,15 @@ function netTest(){
   btn.disabled=false;btn.textContent='开始实时测试';
   rs.textContent='测试失败：请检查连接';
  });
+nfunction loadSyslog(){
+ var el=document.getElementById('syslog-list');if(!el)return;
+ el.innerHTML='<div class="desc">加载中...</div>';
+ fetch(/api/act,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'syslog',params:{lines:100}})})
+ .then(function(r){return r.json();}).then(function(d){
+  if(d.ok)el.innerHTML='<pre style="white-space:pre-wrap;word-break:break-all;margin:0">'+E(d.msg)+'</pre>';
+  else el.innerHTML='<div class="desc">'+E(d.error||'加载失败')+'</div>';
+ }).catch(function(){el.innerHTML='<div class="desc">连接中断</div>';});
+}
 }
 setInterval(refresh,2000);refresh();
 setInterval(refreshDq,3000);

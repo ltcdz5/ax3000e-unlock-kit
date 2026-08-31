@@ -746,6 +746,106 @@ def do_action(action, params=None):
                          creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
         webbrowser.open("http://127.0.0.1:%s" % WEBPORT)
         os._exit(0)
+    if action == "wol":
+        mac = params.get("mac", "").strip().lower()
+        if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", mac):
+            return "MAC 格式须为 aa:bb:cc:dd:ee:ff"
+        import socket, struct
+        parts = mac.split(":")
+        data = b"\xff" * 6 + struct.pack("!6B", *[int(p, 16) for p in parts]) * 16
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.sendto(data, ("255.255.255.255", 9))
+        s.close()
+        return "已发送 WOL 魔术包到 " + mac
+    if action == "syslog":
+        lines = int(params.get("lines", 100))
+        raw = sh("tail -n " + str(lines) + " /var/log/messages 2>/dev/null || "
+                 "tail -n " + str(lines) + " /tmp/messages 2>/dev/null || echo '日志文件不存在'", timeout=10)
+        return raw[:5000]
+    if action == "ddns_status":
+        ddns_svc = sh("/etc/init.d/ddns enabled 2>/dev/null && echo y || echo n").strip()
+        ddns_cfg = sh("uci show ddns 2>/dev/null | head -30").strip() or "未配置"
+        return "DDNS 服务: " + ("已启用" if ddns_svc == "y" else "未启用") + "\n" + ddns_cfg[:2000]
+    if action == "ddns_set":
+        enabled = params.get("enabled", "")
+        if enabled == "1":
+            sh("/etc/init.d/ddns enable 2>/dev/null; /etc/init.d/ddns start 2>/dev/null")
+            return "DDNS 已启用"
+        elif enabled == "0":
+            sh("/etc/init.d/ddns disable 2>/dev/null; /etc/init.d/ddns stop 2>/dev/null")
+            return "DDNS 已禁用"
+        domain = params.get("domain", "").strip()
+        username = params.get("username", "").strip()
+        password = params.get("password", "").strip()
+        if domain and username and password:
+            cmds = [
+                "uci set ddns.myddns=service",
+                "uci set ddns.myddns.enabled='1'",
+                "uci set ddns.myddns.domain='" + domain + "'",
+                "uci set ddns.myddns.username='" + username + "'",
+                "uci set ddns.myddns.password='" + password + "'",
+                "uci commit ddns",
+                "/etc/init.d/ddns restart 2>/dev/null"
+            ]
+            for c in cmds:
+                sh(c)
+            return "DDNS 已配置: " + domain
+        return "请提供 domain/username/password 或 enabled=1/0"
+    if action == "parental_list":
+        raw = sh("iptables -L FORWARD -n -v --line-numbers 2>/dev/null | grep -i 'time\\|MAC' || "
+                 "echo '无家长控制规则'", timeout=10)
+        return raw[:3000] if raw else "无规则"
+    if action == "parental_add":
+        mac = params.get("mac", "").strip().lower()
+        start = params.get("start", "22:00").strip()
+        end = params.get("end", "07:00").strip()
+        days = params.get("days", "Mon,Tue,Wed,Thu,Fri").strip()
+        if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", mac):
+            return "MAC 格式须为 aa:bb:cc:dd:ee:ff"
+        if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", start) or not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", end):
+            return "时间格式须为 HH:MM"
+        if start > end:
+            rule = "iptables -I FORWARD 1 -m mac --mac-source " + mac + " -m time --timestart " + start + " --timestop " + end + " --weekdays " + days + " -j DROP"
+        else:
+            rule = "iptables -I FORWARD 1 -m mac --mac-source " + mac + " -m time --timestart " + start + " --timestop " + end + " --weekdays " + days + " -j DROP"
+        out = sh(rule + " 2>&1; echo RC=$?", timeout=10)
+        if "RC=0" not in out:
+            return "添加失败：内核可能不支持 time 模块（" + out[:200] + "）"
+        # 持久化：保存到文件
+        rules = sh("cat /etc/firewall.user 2>/dev/null || echo ''")
+        if rule not in rules:
+            sh_write("cat >> /etc/firewall.user", "\n" + rule + "  # parental\n")
+        return "已添加家长控制: " + mac + " " + start + "-" + end + " (" + days + ")"
+    if action == "parental_del":
+        mac = params.get("mac", "").strip().lower()
+        if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", mac):
+            return "MAC 格式无效"
+        raw = sh("iptables -L FORWARD -n --line-numbers 2>/dev/null | grep -i '" + mac + "'", timeout=10)
+        lines = [l for l in raw.splitlines() if mac in l.lower()]
+        if not lines:
+            return "未找到该 MAC 的规则"
+        for l in lines:
+            num = l.strip().split()[0]
+            if num.isdigit():
+                sh("iptables -D FORWARD " + num + " 2>/dev/null")
+        # 从持久化文件删除
+        cur = sh("cat /etc/firewall.user 2>/dev/null").splitlines()
+        keep = [l for l in cur if mac not in l.lower()]
+        sh_write("cat > /etc/firewall.user", "\n".join(keep) + "\n")
+        return "已删除 " + mac + " 的家长控制规则"
+    if action == "devtraffic":
+        raw = sh(
+            "echo '=== iptables FORWARD ==='; "
+            "iptables -L FORWARD -v -n -x 2>/dev/null | grep -v '^Chain\\|^target\\|^$' | head -40; "
+            "echo '@@'; "
+            "echo '=== conntrack ==='; "
+            "cat /proc/net/nf_conntrack 2>/dev/null | awk '{print $8, $9, $10}' | sort | uniq -c | sort -rn | head -20; "
+            "echo '@@'; "
+            "echo '=== ARP ==='; "
+            "ip neigh show 2>/dev/null | grep -v fe80 | head -20",
+            timeout=15)
+        return raw[:5000]
     return "未知操作"
 
 
@@ -872,7 +972,7 @@ function tip(t){return '<div class="tip">💡 建议：'+t+'</div>';}
 function panel(title,badgeHtml,tipHtml,desc,bodyHtml,btns){return '<div class="cfg-panel"><h3>'+title+' '+badgeHtml+'</h3>'+tipHtml+'<div class="desc">'+desc+'</div>'+bodyHtml+'<div class="row">'+btns+'</div></div>';}
 function btn(text,cls,data,confirmTxt){
  var b='<button class="btn '+cls+'" data-act="'+data.act+'"';
- ['server','domain','id','size'].forEach(function(k){if(data[k])b+=' data-'+k+'="'+data[k]+'"';});
+ ['server','domain','id','size','mac'].forEach(function(k){if(data[k])b+=' data-'+k+'="'+data[k]+'"';});
  ['inp','inp2','inp3','inp4','inp5'].forEach(function(k){if(data[k])b+=' data-'+k+'="'+data[k]+'"';});
  if(confirmTxt)b+=' data-confirm="'+confirmTxt+'"';
  b+='>'+text+'</button>';
@@ -962,7 +1062,7 @@ function renderCfgBody(d){
     '');
   h+=panel('SSH 解锁',badge(d.ssh),'root · 开机自愈 '+(d.auto_ssh?'已开':'已关')+'。别升级固件（1.0.24）否则全丢。','','','');
   // 设备管理
-  var dv='';d.devices.forEach(function(x){dv+='<div class="item"><span class="val">'+E(x.host)+'</span><span class="val">'+E(x.ip)+'</span><span class="val">'+E(x.mac)+'</span></div>';});
+  var dv='';d.devices.forEach(function(x){dv+='<div class="item"><span class="val">'+E(x.host)+'</span><span class="val">'+E(x.ip)+'</span><span class="val">'+E(x.mac)+'</span>'+btn('唤醒','gray',{act:'wol',mac:x.mac},'发送 WOL 魔术包到 '+E(x.mac)+' 吗？')+'</div>';});
   h+=panel('在线设备',d.devices.length+' 台','当前 DHCP 分配的设备','<div class="list">'+dv+'</div>','');
   // 静态绑定
   var bd='';d.binds.forEach(function(x){bd+='<div class="item"><span class="val">'+E(x.name)+'</span><span class="val">'+E(x.mac)+'</span><span class="val">'+E(x.ip)+'</span><button class="btn red" data-act="device_unbind" data-id="'+E(x.id)+'" data-confirm="解除绑定？">解绑</button></div>';});
@@ -992,6 +1092,16 @@ function renderCfgBody(d){
   h+=panel('Guest 访客网络','','访客 2.4G: '+d.guest_wifi['2g']+' / 5G: '+d.guest_wifi['5g']+'。开启访客网络请用小米管理页 192.168.31.1（本面板不做 wifi 写入避免断网风险）。','','');
   h+=panel('系统操作','','重启路由器(2秒后执行) · 需等待约2分钟恢复','','<button class="btn red" data-act="reboot" data-confirm="确定重启路由器？约2分钟断网" data-confirm-value="yes">重启路由器</button><button class="btn gray" data-act="dnsmasq_restart">重启DNS</button>');
   h+=panel('系统','','运行 '+d.uptime+' · 温度 '+d.temp+'°C · WiFi: '+d.wifi.ssid+' (信道'+d.wifi.channel+')','','','');
+  h+=panel('系统日志','','读取路由器 /var/log/messages 尾部。内核/服务/网络/错误信息均在此记录，排查问题时查看。',
+    '','<div class="row"><button class="btn gray" type="button" onclick="loadSyslog()">加载日志</button></div><div class="list" id="syslog-list" style="max-height:300px;font-family:Consolas,monospace;font-size:11px;line-height:1.5"></div>','');
+  h+=panel('DDNS 动态域名','','DDNS 用于从外网访问路由器（需在路由器上配置域名/用户名/密码）。先查看当前状态再配置。',
+    '','<div class="row"><button class="btn gray" data-act="ddns_status">查看 DDNS 状态</button></div>',
+    '<div class="row"><input class="inp" id="ddns-domain" placeholder="域名"><input class="inp" id="ddns-user" placeholder="用户名"><input class="inp" id="ddns-pass" type="password" placeholder="密码">'+btn('配置 DDNS','',{act:'ddns_set',inp:'ddns-domain',inp2:'ddns-user',inp3:'ddns-pass'})+'</div>');
+  h+=panel('家长控制（时段限制）','','通过 iptables 限制设备上网时段。需内核支持 xt_time 模块。填写 MAC、开始时间、结束时间、工作日。',
+    '','<div class="row"><input class="inp" id="pc-mac" placeholder="MAC 如 aa:bb:cc:dd:ee:ff"><input class="inp" id="pc-start" value="22:00" style="width:70px"><input class="inp" id="pc-end" value="07:00" style="width:70px"><input class="inp" id="pc-days" value="Mon,Tue,Wed,Thu,Fri" style="width:160px">'+btn('添加限制','',{act:'parental_add',inp:'pc-mac',inp2:'pc-start',inp3:'pc-end',inp4:'pc-days'})+'</div>',
+    '<button class="btn gray" data-act="parental_list">查看当前规则</button>');
+  h+=panel('每设备流量统计','','iptables 转发计数 + 连接跟踪统计。注意：NSS 硬件加速下部分流量绕过 iptables，数据仅供参考。',
+    '','<div class="row"><button class="btn gray" data-act="devtraffic">查看流量统计</button></div>','');
   g.innerHTML=h;
   document.getElementById('b-add').onclick=function(){var v=document.getElementById('dns-add').value;if(v){if(confirm('添加 DNS '+v+' 吗？'))post({action:'dns_add',params:{server:v}});}};
 }
@@ -1006,6 +1116,15 @@ function post(body){
   showMsg(d.ok?('✅ '+d.msg):('❌ '+(d.error||'失败')));
   if(d.ok)loadCfg(0);
  }).catch(function(){showMsg('操作失败：连接中断');});
+}
+function loadSyslog(){
+ var el=document.getElementById('syslog-list');if(!el)return;
+ el.innerHTML='<div class="desc">加载中...</div>';
+ fetch('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'syslog',params:{lines:100}})})
+ .then(function(r){return r.json();}).then(function(d){
+  if(d.ok)el.innerHTML='<pre style="white-space:pre-wrap;word-break:break-all;margin:0">'+E(d.msg)+'</pre>';
+  else el.innerHTML='<div class="desc">'+E(d.error||'加载失败')+'</div>';
+ }).catch(function(){el.innerHTML='<div class="desc">连接中断</div>';});
 }
 </script></body></html>
 """
