@@ -11,19 +11,38 @@
 import re
 
 # key = 机型识别源输出（AX3000E: `nvram get model`）；字段供面板/自愈/部署做分支判断
+# capabilities: 设备特有能力，面板据此动态显示对应功能按钮
 DEVICE_PROFILES = {
     "RN07": {
-        "name": "小米 AX3000E", "soc": "IPQ5018", "firmware_pin": "1.0.24",
+        "name": "小米 AX3000E", "soc": "IPQ5018（双核 A53）", "firmware_pin": "1.0.24",
         "ssh_rsa_only": True,   # dropbear 2017.75 只认 ssh-rsa，paramiko 需禁 rsa-sha2-*
         "led_ctl": True,        # /usr/sbin/led_ctl 可用
-        "notes": "本套件实测基准",
+        "ram_mb": 186, "data_kb": 1700,  # 硬件限制
+        "capabilities": {
+            "full_adblock": False,  # /data 太小，放不下全量列表
+            "nlbwmon": False,       # 确认无 nlbwmon
+            "etherwake": False,     # 确认无 etherwake
+            "big_cache": False,     # 内存有限，缓存不宜过大
+            "vpn": False,           # 性能不足跑 VPN
+            "perf_optimize": True,  # 基础优化可用
+        },
+        "notes": "本套件实测基准；资源受限，高级功能需外部设备",
     },
     # 新机型：用 deploy/device_probe.py 实机校准后在此添加条目
     "BE3600": {
         "name": "小米 BE3600 2.5G", "soc": "IPQ5312（四核 A53）", "firmware_pin": "1.0.81",
         "ssh_rsa_only": False,   # 较新 dropbear，支持 rsa-sha2
         "led_ctl": False,        # 待实机验证
-        "notes": "预适配占位，待实机校准；v1.0.87 修复了注入漏洞需先降级；256MB RAM / 128MB NAND",
+        "ram_mb": 256, "data_kb": 128000,  # 128MB NAND，/data 远大于 AX3000E
+        "capabilities": {
+            "full_adblock": True,   # 大存储可放全量列表
+            "nlbwmon": True,        # 待实机验证（四核有资源跑）
+            "etherwake": True,      # 待实机验证
+            "big_cache": True,      # 256MB RAM 可设更大缓存
+            "vpn": True,           # 四核可跑轻量 VPN
+            "perf_optimize": True,  # 基础优化
+        },
+        "notes": "预适配占位，待实机校准；v1.0.87 修复了注入漏洞需先降级",
     },
 }
 
