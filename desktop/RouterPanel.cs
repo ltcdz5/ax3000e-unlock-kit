@@ -46,19 +46,28 @@ class RouterPanel {
                 return;
             }
 
-            python = new Process();
-            python.StartInfo.FileName = pythonExe;
-            python.StartInfo.Arguments = "\"" + panelScript + "\" --host " + routerIp + " --passwd " + passwd;
-            python.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-            python.StartInfo.CreateNoWindow = true;
-            python.Start();
+            bool panelAlreadyRunning = false;
+            try {
+                var test = WebRequest.Create("http://127.0.0.1:8787/api");
+                test.GetResponse().Close();
+                panelAlreadyRunning = true;
+            } catch { }
 
-            for (int i = 0; i < 30; i++) {
-                try {
-                    var req = WebRequest.Create("http://127.0.0.1:8787/api");
-                    req.GetResponse().Close();
-                    break;
-                } catch { Thread.Sleep(1000); }
+            if (!panelAlreadyRunning) {
+                python = new Process();
+                python.StartInfo.FileName = pythonExe;
+                python.StartInfo.Arguments = "\"" + panelScript + "\" --host " + routerIp + " --passwd " + passwd;
+                python.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                python.StartInfo.CreateNoWindow = true;
+                python.Start();
+
+                for (int i = 0; i < 30; i++) {
+                    try {
+                        var req = WebRequest.Create("http://127.0.0.1:8787/api");
+                        req.GetResponse().Close();
+                        break;
+                    } catch { Thread.Sleep(1000); }
+                }
             }
 
             // 用 Edge app 模式打开独立窗口，等待关闭后清理
