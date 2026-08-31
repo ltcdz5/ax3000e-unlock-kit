@@ -15,7 +15,19 @@ class RouterPanel {
         try {
             string pythonExe = FindPython();
             if (pythonExe == null) {
-                Msg("未找到 Python，请安装 Python 3.12+");
+                Msg("未找到 Python，请安装 Python 3.11+");
+                return;
+            }
+
+            string repoDir = AppDomain.CurrentDomain.BaseDirectory;
+            string panelScript = Path.Combine(repoDir, "panel", "router_monitor_ap.py");
+            if (!File.Exists(panelScript)) {
+                Msg("找不到面板脚本：\n" + panelScript + "\n\n请将本 exe 放在套件根目录运行");
+                return;
+            }
+
+            if (panelReady()) {
+                runPanel(pythonExe, panelScript);
                 return;
             }
 
@@ -28,61 +40,93 @@ class RouterPanel {
             ScanForm scanForm = new ScanForm();
             scanForm.Show();
             Thread scanThread = new Thread(FindRouter);
+            scanThread.IsBackground = true;
             scanThread.Start();
             Application.Run(scanForm);
-            scanThread.Join(5000);
+            scanThread.Join(1000);
 
             string routerIp = foundIp;
             if (routerIp == null) {
-                routerIp = Prompt("未发现路由器，请输入路由器 IP", "192.168.2.106");
+                routerIp = Prompt("未发现路由器，请手动输入路由器 IP", "192.168.31.1");
                 if (string.IsNullOrEmpty(routerIp)) return;
             }
 
-            string repoDir = AppDomain.CurrentDomain.BaseDirectory;
-            string panelScript = Path.Combine(repoDir, "panel", "router_monitor_ap.py");
+            startPython(pythonExe, panelScript, routerIp, passwd);
 
-            if (!File.Exists(panelScript)) {
-                Msg("找不到面板脚本：" + panelScript + "\n请将 exe 放在仓库根目录运行");
+            for (int i = 0; i < 40 && !panelReady(); i++) Thread.Sleep(500);
+
+            if (!panelReady()) {
+                StopPanel();
+                Msg("面板服务未能启动。\n\n常见原因：\n" +
+                    "1) 路由器未解锁 SSH（先跑 tools/一键解锁.bat）\n" +
+                    "2) SSH 密码不对\n" +
+                    "3) 路由器 IP 不对（当前用 " + routerIp + "）\n" +
+                    "4) 缺 paramiko：pip install \"paramiko<5\"");
                 return;
             }
 
-            bool panelAlreadyRunning = false;
-            try {
-                var test = WebRequest.Create("http://127.0.0.1:8787/api");
-                test.GetResponse().Close();
-                panelAlreadyRunning = true;
-            } catch { }
-
-            if (!panelAlreadyRunning) {
-                python = new Process();
-                python.StartInfo.FileName = pythonExe;
-                python.StartInfo.Arguments = "\"" + panelScript + "\" --host " + routerIp + " --passwd " + passwd;
-                python.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                python.StartInfo.CreateNoWindow = true;
-                python.Start();
-
-                for (int i = 0; i < 30; i++) {
-                    try {
-                        var req = WebRequest.Create("http://127.0.0.1:8787/api");
-                        req.GetResponse().Close();
-                        break;
-                    } catch { Thread.Sleep(1000); }
-                }
-            }
-
-            // 用 Edge app 模式打开独立窗口，等待关闭后清理
-            var edge = Process.Start(@"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                "--app=http://127.0.0.1:8787");
-            if (edge != null) edge.WaitForExit();
+            runPanel(null, null);
         } catch (Exception ex) {
             Msg("启动失败：" + ex.Message);
         } finally {
-            try { if (python != null && !python.HasExited) python.Kill(); } catch {}
+            StopPanel();
         }
     }
 
+    static bool panelReady() {
+        try {
+            var req = WebRequest.Create("http://127.0.0.1:8787/api");
+            req.Timeout = 1500;
+            req.GetResponse().Close();
+            return true;
+        } catch { return false; }
+    }
+
+    // 打开独立 Edge 窗口，窗口关闭后结束；确保不留任何子进程
+    static void runPanel(string pythonExe, string panelScript) {
+        string profile = Path.Combine(Path.GetTempPath(), "ax3000e-panel-edge");
+        try { Directory.CreateDirectory(profile); } catch { }
+
+        var psi = new ProcessStartInfo();
+        psi.FileName = FindEdge();
+        psi.Arguments = "--app=http://127.0.0.1:8787 --user-data-dir=\"" + profile + "\"";
+        try {
+            var edge = Process.Start(psi);
+            if (edge != null) edge.WaitForExit();
+        } catch {
+            Msg("无法启动 Edge，请手动打开 http://127.0.0.1:8787");
+        }
+    }
+
+    static string FindEdge() {
+        string[] paths = {
+            @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            @"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        };
+        foreach (string p in paths) if (File.Exists(p)) return p;
+        return "msedge.exe";
+    }
+
+    static void startPython(string pythonExe, string panelScript, string routerIp, string passwd) {
+        python = new Process();
+        python.StartInfo.FileName = pythonExe;
+        python.StartInfo.Arguments = "\"" + panelScript + "\" --host " + routerIp + " --passwd \"" + passwd + "\"";
+        python.StartInfo.WorkingDirectory = Path.GetDirectoryName(panelScript);
+        python.StartInfo.UseShellExecute = false;
+        python.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+        python.StartInfo.CreateNoWindow = true;
+        python.StartInfo.EnvironmentVariables["PANEL_PPID"] = Process.GetCurrentProcess().Id.ToString();
+        python.Start();
+    }
+
+    static void StopPanel() {
+        try {
+            if (python != null && !python.HasExited) python.Kill();
+        } catch { }
+    }
+
     static void Msg(string text) {
-        MessageBox.Show(text, "路由器面板", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        MessageBox.Show(text, "路由器面板", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     static string FindPython() {
@@ -101,13 +145,12 @@ class RouterPanel {
             try {
                 string p = Path.Combine(dir.Trim(), "python.exe");
                 if (File.Exists(p)) return p;
-            } catch {}
+            } catch { }
         }
         return null;
     }
 
     static void FindRouter() {
-        // 先试常见 IP（并行）
         string[] common = { "192.168.31.1", "192.168.2.1", "192.168.1.1",
                             "192.168.0.1", "192.168.2.106", "192.168.2.100" };
         int done = 0;
@@ -119,20 +162,18 @@ class RouterPanel {
             });
         }
         while (done < common.Length && scanDone == 0) Thread.Sleep(100);
-
         if (scanDone == 1) return;
 
-        // 扫本地子网（并行）
         string subnet = GetLocalSubnet();
         if (subnet == null) return;
         for (int i = 1; i < 255; i++) {
+            if (scanDone == 1) return;
             string ip = subnet + i;
             ThreadPool.QueueUserWorkItem(_ => {
                 if (Fingerprint(ip) && Interlocked.Exchange(ref scanDone, 1) == 0)
                     foundIp = ip;
             });
         }
-        // 等最多 15 秒
         for (int w = 0; w < 150 && scanDone == 0; w++) Thread.Sleep(100);
     }
 
@@ -180,6 +221,8 @@ class RouterPanel {
 class ScanForm : Form {
     Label status;
     System.Windows.Forms.Timer timer;
+    int ticks = 0;
+
     public ScanForm() {
         this.Width = 360; this.Height = 100;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -195,7 +238,8 @@ class ScanForm : Form {
         timer = new System.Windows.Forms.Timer();
         timer.Interval = 200;
         timer.Tick += (s, e) => {
-            if (RouterPanel.scanDone == 1) {
+            ticks++;
+            if (RouterPanel.scanDone == 1 || ticks >= 100) {
                 timer.Stop();
                 this.Close();
             }
@@ -203,7 +247,7 @@ class ScanForm : Form {
         timer.Start();
     }
     protected override void OnFormClosing(FormClosingEventArgs e) {
-        if (RouterPanel.scanDone == 0) e.Cancel = true;
+        if (RouterPanel.scanDone == 0 && ticks < 100) e.Cancel = true;
         base.OnFormClosing(e);
     }
 }

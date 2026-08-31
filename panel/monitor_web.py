@@ -267,8 +267,39 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _start_parent_watchdog():
+    """父进程（桌面 exe）消失即自杀，杜绝面板服务成为孤儿常驻。仅 Windows 生效。"""
+    if os.name != "nt":
+        return
+    try:
+        ppid = int(os.environ.get("PANEL_PPID", "").strip())
+    except ValueError:
+        return
+    if ppid <= 0:
+        return
+    import threading
+    import ctypes
+    import time
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1000, False, ppid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        os._exit(0)
+
+    def loop():
+        still_active = 259
+        code = ctypes.c_ulong()
+        while True:
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != still_active:
+                os._exit(0)
+            time.sleep(2)
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def serve(ctx):
     ctx = dict(ctx)
+    _start_parent_watchdog()
     # 默认每次请求都从磁盘读模板（HTML 热加载；业务侧可传 bytes 覆盖此行为）
     if "page" not in ctx:
         ctx["page"] = load_page
