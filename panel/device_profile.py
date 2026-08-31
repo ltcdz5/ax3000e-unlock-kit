@@ -35,14 +35,14 @@ DEVICE_PROFILES = {
         "led_ctl": False,        # 待实机验证
         "ram_mb": 256, "nand_mb": 128, "data_kb": 0,  # 128MB NAND，/data 大小待实机 df 确认
         "capabilities": {
-            "full_adblock": True,   # 大存储可放全量列表
-            "nlbwmon": True,        # 待实机验证（四核有资源跑）
-            "etherwake": True,      # 待实机验证
-            "big_cache": True,      # 256MB RAM 可设更大缓存
+            "full_adblock": False,  # 同 AX3000E：128MB NAND 双系统分区，/data 空间同样受限
+            "nlbwmon": False,       # 待实机验证
+            "etherwake": False,     # 待实机验证
+            "big_cache": True,      # 256MB RAM 可设更大 dnsmasq 缓存（内存缓存，不占 /data）
             "vpn": True,           # 四核可跑轻量 VPN
             "perf_optimize": True,  # 基础优化
         },
-        "notes": "预适配占位，待实机校准；v1.0.87 修复了注入漏洞需先降级",
+        "notes": "预适配占位，待实机校准；v1.0.87 修复了注入漏洞需先降级；128MB NAND 双系统分区，/data 同 AX3000E 受限",
     },
 }
 
