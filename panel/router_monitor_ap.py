@@ -281,7 +281,7 @@ def collect():
         "head -1 /proc/stat; echo '@@'; "
         "grep -E 'MemTotal|MemFree|Buffers|^Cached' /proc/meminfo; echo '@@'; "
         "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null; echo '@@'; "
-        "grep -E 'eth1\.3|br-lan|eth0\.1|wifi1' /proc/net/dev | head -1; echo '@@'; "
+        "awk 'NR>2&&$1!=\"lo:\"{rx+=$2;tx+=$10}END{print rx,tx}' /proc/net/dev; echo '@@'; "
         "cat /proc/net/tcp | wc -l; echo '@@'; "
         "cat /proc/loadavg"
     )
