@@ -5,10 +5,11 @@ using System.Threading;
 using System.Windows.Forms;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Collections.Generic;
 
 class RouterPanel {
     static Process python;
+    static string foundIp = null;
+    internal static int scanDone = 0;
 
     static void Main() {
         try {
@@ -18,23 +19,30 @@ class RouterPanel {
                 return;
             }
 
-            string routerIp = FindRouter();
+            string passwd = Environment.GetEnvironmentVariable("ROUTER_PASSWD");
+            if (string.IsNullOrEmpty(passwd)) {
+                passwd = Prompt("请输入路由器 SSH 密码", "admin");
+                if (string.IsNullOrEmpty(passwd)) return;
+            }
+
+            ScanForm scanForm = new ScanForm();
+            scanForm.Show();
+            Thread scanThread = new Thread(FindRouter);
+            scanThread.Start();
+            Application.Run(scanForm);
+            scanThread.Join(5000);
+
+            string routerIp = foundIp;
             if (routerIp == null) {
                 routerIp = Prompt("未发现路由器，请输入路由器 IP", "192.168.2.106");
                 if (string.IsNullOrEmpty(routerIp)) return;
-            }
-
-            string passwd = Environment.GetEnvironmentVariable("ROUTER_PASSWD");
-            if (string.IsNullOrEmpty(passwd)) {
-                passwd = Prompt("请输入 SSH 密码", "admin");
-                if (string.IsNullOrEmpty(passwd)) return;
             }
 
             string repoDir = AppDomain.CurrentDomain.BaseDirectory;
             string panelScript = Path.Combine(repoDir, "panel", "router_monitor_ap.py");
 
             if (!File.Exists(panelScript)) {
-                Msg("找不到面板脚本：" + panelScript);
+                Msg("找不到面板脚本：" + panelScript + "\n请将 exe 放在仓库根目录运行");
                 return;
             }
 
@@ -68,40 +76,53 @@ class RouterPanel {
 
     static string FindPython() {
         string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        string[] candidates = {
+        string[] paths = {
             Path.Combine(local, @"Programs\Python\Python312\python.exe"),
             Path.Combine(local, @"Programs\Python\Python311\python.exe"),
-            @"C:\Python312\python.exe",
-            @"C:\Python311\python.exe",
+            @"C:\Python312\python.exe", @"C:\Python311\python.exe",
             @"C:\Program Files\Python312\python.exe",
             @"C:\Program Files\Python311\python.exe",
         };
-        foreach (string exe in candidates) {
-            if (File.Exists(exe)) return exe;
+        foreach (string p in paths) {
+            if (File.Exists(p)) return p;
         }
-        // 最后试 PATH 里的 python
         foreach (string dir in Environment.GetEnvironmentVariable("PATH").Split(';')) {
             try {
-                string p = Path.Combine(dir, "python.exe");
+                string p = Path.Combine(dir.Trim(), "python.exe");
                 if (File.Exists(p)) return p;
             } catch {}
         }
         return null;
     }
 
-    static string FindRouter() {
-        string[] common = { "192.168.31.1", "192.168.2.106", "192.168.2.1", "192.168.1.1", "192.168.0.1" };
+    static void FindRouter() {
+        // 先试常见 IP（并行）
+        string[] common = { "192.168.31.1", "192.168.2.1", "192.168.1.1",
+                            "192.168.0.1", "192.168.2.106", "192.168.2.100" };
+        int done = 0;
         foreach (string ip in common) {
-            if (Fingerprint(ip)) return ip;
+            ThreadPool.QueueUserWorkItem(_ => {
+                if (Fingerprint(ip) && Interlocked.Exchange(ref scanDone, 1) == 0)
+                    foundIp = ip;
+                Interlocked.Increment(ref done);
+            });
         }
+        while (done < common.Length && scanDone == 0) Thread.Sleep(100);
+
+        if (scanDone == 1) return;
+
+        // 扫本地子网（并行）
         string subnet = GetLocalSubnet();
-        if (subnet != null) {
-            for (int i = 1; i < 255; i++) {
-                string ip = subnet + i;
-                if (Fingerprint(ip)) return ip;
-            }
+        if (subnet == null) return;
+        for (int i = 1; i < 255; i++) {
+            string ip = subnet + i;
+            ThreadPool.QueueUserWorkItem(_ => {
+                if (Fingerprint(ip) && Interlocked.Exchange(ref scanDone, 1) == 0)
+                    foundIp = ip;
+            });
         }
-        return null;
+        // 等最多 15 秒
+        for (int w = 0; w < 150 && scanDone == 0; w++) Thread.Sleep(100);
     }
 
     static bool Fingerprint(string ip) {
@@ -135,13 +156,43 @@ class RouterPanel {
         input.StartPosition = FormStartPosition.CenterScreen;
         input.Text = "路由器面板";
         input.MaximizeBox = false; input.MinimizeBox = false;
-
         var lbl = new Label(); lbl.Text = text; lbl.Left = 12; lbl.Top = 12; lbl.Width = 360;
         var tb = new TextBox(); tb.Left = 12; tb.Top = 36; tb.Width = 360; tb.Text = def;
         var btn = new Button(); btn.Text = "确定"; btn.Left = 160; btn.Top = 68; btn.Width = 80;
         btn.DialogResult = DialogResult.OK;
-
+        input.AcceptButton = btn;
         input.Controls.Add(lbl); input.Controls.Add(tb); input.Controls.Add(btn);
         return input.ShowDialog() == DialogResult.OK ? tb.Text : null;
+    }
+}
+
+class ScanForm : Form {
+    Label status;
+    System.Windows.Forms.Timer timer;
+    public ScanForm() {
+        this.Width = 360; this.Height = 100;
+        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.StartPosition = FormStartPosition.CenterScreen;
+        this.Text = "路由器面板";
+        this.ControlBox = false;
+        status = new Label();
+        status.Text = "正在扫描路由器...";
+        status.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+        status.Dock = System.Windows.Forms.DockStyle.Fill;
+        status.Font = new System.Drawing.Font("Microsoft YaHei", 11);
+        this.Controls.Add(status);
+        timer = new System.Windows.Forms.Timer();
+        timer.Interval = 200;
+        timer.Tick += (s, e) => {
+            if (RouterPanel.scanDone == 1) {
+                timer.Stop();
+                this.Close();
+            }
+        };
+        timer.Start();
+    }
+    protected override void OnFormClosing(FormClosingEventArgs e) {
+        if (RouterPanel.scanDone == 0) e.Cancel = true;
+        base.OnFormClosing(e);
     }
 }
