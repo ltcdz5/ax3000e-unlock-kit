@@ -44,10 +44,34 @@ def main():
             print("[!] 未提供密码，退出"); sys.exit(1)
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # 先连上去获取设备型号，再决定 SSH 参数
+    known_rsa_only = False  # AX3000E 需要，BE3600 不需要
     try:
-        c.connect(IP, port=SSHPORT, username=USER, password=PASSWD, timeout=10,
-                  allow_agent=False, look_for_keys=False,
-                  disabled_algorithms={'keys': ['rsa-sha2-256', 'rsa-sha2-512']})
+        tmp = paramiko.SSHClient()
+        tmp.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        tmp.connect(IP, port=SSHPORT, username=USER, password=PASSWD, timeout=10,
+                    allow_agent=False, look_for_keys=False,
+                    disabled_algorithms={'keys': ['rsa-sha2-256', 'rsa-sha2-512']})
+        _, o, _ = tmp.exec_command("nvram get model 2>/dev/null || echo UNKNOWN", timeout=5)
+        model = o.read().decode('utf-8', 'replace').strip()
+        tmp.close()
+        if model == "RN07":
+            known_rsa_only = True
+        elif model == "BE3600":
+            known_rsa_only = False  # 新 dropbear 不需要禁用算法
+        else:
+            known_rsa_only = True  # 未知机型保守走 AX3000E 参数
+    except:
+        known_rsa_only = True  # 连不上也保守走旧参数
+
+    try:
+        if known_rsa_only:
+            c.connect(IP, port=SSHPORT, username=USER, password=PASSWD, timeout=10,
+                      allow_agent=False, look_for_keys=False,
+                      disabled_algorithms={'keys': ['rsa-sha2-256', 'rsa-sha2-512']})
+        else:
+            c.connect(IP, port=SSHPORT, username=USER, password=PASSWD, timeout=10,
+                      allow_agent=False, look_for_keys=False)
     except Exception as e:
         print("[!] SSH 连接失败: %s（先确认已解锁且未被 dropbear 限流）" % e); sys.exit(1)
 

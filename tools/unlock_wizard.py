@@ -110,6 +110,20 @@ def port22_ok(ip, wait=10):
 
 def run_unlock(ip, web_pass=None, stok=None, log=print):
     log("目标路由器: %s" % ip)
+    # 探测设备型号和固件版本（BE3600 需特殊处理）
+    try:
+        info = json.loads(http_get("http://%s/cgi-bin/luci/api/xqsystem/init_info" % ip))
+        hw = info.get("hardware", "")
+        ver = info.get("romversion", "")
+        if hw == "BE3600":
+            log("设备: 小米 BE3600，固件 %s" % ver)
+            if ver >= "1.0.87":
+                log("⚠️ BE3600 v1.0.87 已修复 start_binding 注入漏洞，需先降级到 v1.0.81")
+                log("   降级方法见桌面文档: BE3600-降级开SSH方法存档-20260829.md")
+        else:
+            log("设备型号: %s，固件 %s" % (hw, ver))
+    except Exception:
+        log("设备信息读取失败（不影响解锁流程）")
     if not stok:
         log("登录管理页取会话令牌…")
         stok = web_login(ip, web_pass, log=log)
