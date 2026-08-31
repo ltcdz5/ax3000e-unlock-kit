@@ -61,14 +61,14 @@ class RouterPanel {
                 } catch { Thread.Sleep(1000); }
             }
 
-            // 用 Edge app 模式打开独立窗口（无地址栏、无标签页）
-            Process.Start(@"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            // 用 Edge app 模式打开独立窗口，等待关闭后清理
+            var edge = Process.Start(@"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 "--app=http://127.0.0.1:8787");
-            Application.Run();
+            if (edge != null) edge.WaitForExit();
         } catch (Exception ex) {
             Msg("启动失败：" + ex.Message);
         } finally {
-            try { if (python != null) python.Kill(); } catch {}
+            try { if (python != null && !python.HasExited) python.Kill(); } catch {}
         }
     }
 

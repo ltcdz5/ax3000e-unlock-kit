@@ -171,7 +171,7 @@ def collect():
         p = nd.split()
         if len(p) >= 10:
             try:
-                rx, tx = int(p[1]), int(p[9])
+                rx, tx = int(p[0]), int(p[1])
             except Exception:
                 rx, tx = 0, 0
             if last_net:
