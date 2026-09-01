@@ -11,10 +11,10 @@
 import sys, os, re, io, socket, argparse, subprocess, json, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-sys.stdout.reconfigure(encoding="utf-8")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "panel"))
+from monitor_web import KIT_VERSION      # 单一来源：panel/monitor_web.py
 
-# 套件版本（与 monitor_web.py 同步）
-KIT_VERSION = "2.4.0"
+sys.stdout.reconfigure(encoding="utf-8")
 
 
 def _ver_tuple(v):

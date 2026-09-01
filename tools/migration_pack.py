@@ -11,6 +11,9 @@ uci 系统配置不自动应用（不同机型结构不同，快照仅供参考�
 """
 import sys, os, re, io, json, time, base64, hashlib, zipfile, argparse
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "panel"))
+from monitor_web import KIT_VERSION      # 单一来源：panel/monitor_web.py
+
 sys.stdout.reconfigure(encoding="utf-8")
 
 DATA_FILES = [
@@ -28,7 +31,6 @@ UCI_FILES = ["network", "wireless", "dhcp", "firewall", "miqos", "upnpd", "port_
 FORBIDDEN_NAMES = ("dropbear_rsa_host_key", "dropbear_ecdsa_host_key",
                    "dropbear_ed25519_host_key", "dropbear_dss_host_key")
 PACK_FORMAT = 1
-KIT_VERSION = "2.0.0"
 
 
 def log(msg):

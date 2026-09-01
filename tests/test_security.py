@@ -6,17 +6,23 @@ import sys
 
 import pytest
 
-PANEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "panel")
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PANEL_DIR = os.path.join(_ROOT, "panel")
+TOOLS_DIR = os.path.join(_ROOT, "tools")
 
 
-def _load(name, filename):
-    if PANEL_DIR not in sys.path:
-        sys.path.insert(0, PANEL_DIR)          # 主面板 import monitor_web 需要同目录可寻址
-    spec = importlib.util.spec_from_file_location(name, os.path.join(PANEL_DIR, filename))
+def _load(name, filename, directory=PANEL_DIR):
+    if directory not in sys.path:
+        sys.path.insert(0, directory)          # 主面板 import monitor_web 需要同目录可寻址
+    spec = importlib.util.spec_from_file_location(name, os.path.join(directory, filename))
     m = importlib.util.module_from_spec(spec)
     sys.modules[name] = m
     spec.loader.exec_module(m)
     return m
+
+
+def _load_tool(name, filename):
+    return _load(name, filename, TOOLS_DIR)
 
 
 mw = _load("monitor_web_ut", "monitor_web.py")
@@ -84,6 +90,13 @@ def test_escape_inline_json_line_separators():
 def test_kit_version_is_semver():
     import re as _re
     assert _re.fullmatch(r"\d+\.\d+\.\d+", mw.KIT_VERSION), "发版时必须同步更新 KIT_VERSION"
+
+
+def test_kit_version_has_single_source():
+    """版本号只允许 panel/monitor_web.py 一处定义；tools 必须导入，不得各自硬编码。"""
+    for filename in ("kit_doctor.py", "migration_pack.py"):
+        tool = _load_tool(filename[:-3] + "_ver_ut", filename)
+        assert tool.KIT_VERSION == mw.KIT_VERSION, filename + " 自带了 KIT_VERSION 常量"
 
 
 def test_host_ok_blocks_non_loopback_in_local_mode():
