@@ -124,7 +124,7 @@ function refreshCfg(){
  .catch(function(){var g=document.getElementById('cfg-grid');if(g)g.innerHTML='<div class="cfg-panel"><h3>⚠️ 配置加载失败</h3><div class="desc">SSH 连接失败、路由器重启中或密码已更改。<a href="javascript:refreshCfg()" style="color:var(--acc)">点击重试</a>；若持续失败请看 <b>docs/自救手册.md</b>。</div></div>';})
  .finally(function(){cfgBusy=false;});
 }
-var LONG={antiad_update:'更新中…',awavenue_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',backup:'备份中…',restore:'恢复中…'};
+var LONG={antiad_update:'更新中…',awavenue_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',dns_cache_tune:'优化中…',dnsmasq_restart:'重启中…',wifi_scan:'扫描中…',backup:'备份中…',restore:'恢复中…'};
 function doAct(a,p,cf,b){
  var real={},missing=null;
  Object.keys(p||{}).forEach(function(k){

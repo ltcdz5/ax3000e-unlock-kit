@@ -987,7 +987,7 @@ document.addEventListener('click',function(e){
   if(b.dataset[k]){var el=document.getElementById(b.dataset[k]);if(el)params[k.replace('inp','')]=el.value;}
  });
  var actName=b.dataset.act;
- var LONG={antiad_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',backup:'备份中…',restore:'恢复中…'};
+ var LONG={antiad_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',dnsmasq_restart:'重启中…',backup:'备份中…',restore:'恢复中…'};
  var busy=LONG[actName];
  if(b.dataset.confirm){if(confirm(b.dataset.confirm)){if(b.dataset.confirmValue)params.confirm=b.dataset.confirmValue;}else return;}
  if(busy){b.disabled=true;b.dataset.orig=b.textContent;b.textContent=busy;}
