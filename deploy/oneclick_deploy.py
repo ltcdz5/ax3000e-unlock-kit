@@ -97,7 +97,7 @@ for d in noip6:
 q(ssh, "cp /tmp/dnsmasq.d/92-noipv6.conf /data/noipv6.conf")
 print("抖音系 %d 域名禁 IPv6（消除黑洞回退）" % len(noip6))
 
-q(ssh, "printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /tmp/dnsmasq.d/93-logqueries.conf")
+q(ssh, "printf 'log-queries\\n' > /tmp/dnsmasq.d/93-logqueries.conf")
 q(ssh, "cp /tmp/dnsmasq.d/93-logqueries.conf /data/logqueries.conf")
 print("DNS 查询日志已启用（/tmp/dnsquery.log，面板实时显示）")
 

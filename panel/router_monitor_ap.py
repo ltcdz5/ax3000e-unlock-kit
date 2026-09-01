@@ -12,6 +12,7 @@ from collections import deque
 import monitor_web
 import device_profile
 import wifi_scan
+import ad_stats
 
 HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
 SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
@@ -634,21 +635,14 @@ def get_ad_stats():
     """去广告统计：列表规模、今日拦截数、拦截率。单次 SSH 往返。"""
     raw = sh(
         "wc -l /tmp/dnsmasq.d/96-antiad.conf /tmp/dnsmasq.d/90-awavenue.conf 2>/dev/null | tail -n 1; echo @@;"
-        "grep -c 'is 0\\.0\\.0\\.0' /tmp/dnsquery.log 2>/dev/null || echo 0; echo @@;"
-        "grep -c 'query\\[' /tmp/dnsquery.log 2>/dev/null || echo 0; echo @@;"
-        "grep -c cached /tmp/dnsquery.log 2>/dev/null || echo 0", timeout=15)
-    parts = raw.split("@@")
-    def seg(i):
-        return parts[i].strip() if i < len(parts) else ""
-    total = seg(0).split()[0] if seg(0) else "0"
-    blocked = seg(1)
-    queries = seg(2)
-    cached = seg(3)
-    rate = 0
-    if queries.isdigit() and int(queries) > 0:
-        rate = round(int(blocked or "0") * 100.0 / int(queries) * 100, 1)
-    return {"total_domains": total, "blocked_today": blocked or "0",
-            "total_queries": queries or "0", "cached": cached or "0", "block_rate": rate}
+        "grep -c 'is 0\\.0\\.0\\.0' /tmp/dnsquery.log 2>/dev/null; echo @@;"
+        "grep -c 'query\\[' /tmp/dnsquery.log 2>/dev/null; echo @@;"
+        "grep -c cached /tmp/dnsquery.log 2>/dev/null; echo @@;"
+        "test -f /tmp/dnsmasq.d/93-logqueries.conf && echo ON", timeout=15)
+    parts = (raw.split("@@") + [""] * 5)[:5]
+    toks = parts[0].split()
+    counts = tuple(ad_stats.parse_count(p) for p in parts[1:4])
+    return ad_stats.summarize(counts, parts[4].strip() == "ON", toks[0] if toks else "0")
 
 
 def get_dns_stats():
@@ -779,12 +773,12 @@ def do_action(action, params=None):
                    "test -f /tmp/dnsmasq.d/93-logqueries.conf || echo DONE")
             ok_msg = "DNS 查询日志已关闭（持久生效，重启后仍关闭；dnsmasq CPU 负担降低）"
         else:
-            r = sh("printf 'log-queries\\nlog-facility=/tmp/dnsquery.log\\n' > /data/logqueries.conf; "
+            r = sh("printf 'log-queries\\n' > /data/logqueries.conf; "
                    "cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; /etc/init.d/dnsmasq restart; "
-                   "test -f /tmp/dnsmasq.d/93-logqueries.conf && echo DONE")
+                   "sleep 5; pidof dnsmasq >/dev/null || { rm -f /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf; /etc/init.d/dnsmasq restart; }; test -f /tmp/dnsmasq.d/93-logqueries.conf && pidof dnsmasq >/dev/null && echo DONE")
             ok_msg = "DNS 查询日志已开启（写入 tmpfs /tmp/dnsquery.log，不耗闪存）"
         if "DONE" not in r:
-            return "SSH 执行失败（路由器无响应或过载），状态未变更，请稍后重试"
+            return "查询日志开关未生效：dnsmasq 未能在新配置下启动，已自动回滚，请保持查询日志关闭"
         return ok_msg
     if action == "cache_set":
         v = str(params.get("size", "")).strip()

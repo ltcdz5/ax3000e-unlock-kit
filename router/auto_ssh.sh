@@ -1,5 +1,5 @@
 #!/bin/sh
-# auto_ssh.sh v7 (2026-09-02) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
+# auto_ssh.sh v8 (2026-09-02) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
 # v7: 防误升级改用固件自带 otapred 插件的 uci 开关（每次开机压实 auto=0）；
 #     废弃 v6 的 address=/otapred.settings.auto/0.0.0.0 —— 那是把配置项名当域名拦，从不生效。
 # v6: anti-AD 列表 NXDOMAIN 化（0.0.0.0/空地址 → /#，客户端直接放弃不重试，降低查询量）
@@ -155,7 +155,8 @@ apply_dns() {
         uci set otapred.settings.auto=0 2>/dev/null; uci commit otapred 2>/dev/null; }
     rm -f /tmp/dnsmasq.d/99-block-ota.conf
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
-    [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
+    # 老设备的 /data/logqueries.conf 里可能带着 log-facility，与上面的 93-stats.conf 撞成重复关键字，dnsmasq 会拒绝启动
+    [ -s /data/logqueries.conf ] && grep -v '^log-facility' /data/logqueries.conf > /tmp/dnsmasq.d/93-logqueries.conf
     [ -s /data/microsoft.conf ] && cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf
     [ -s /data/noresolv.conf ] && cp /data/noresolv.conf /tmp/dnsmasq.d/94-noresolv.conf
     # 抖音系定向（95-bytedance.conf）已废弃，故意不恢复——防止复活
