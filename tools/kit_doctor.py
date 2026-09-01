@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "panel"))
 from monitor_web import KIT_VERSION      # 单一来源：panel/monitor_web.py
+from device_profile import firmware_pin   # 单一来源：panel/device_profile.py 机型能力表
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -226,17 +227,22 @@ def main():
         rom = info.get("romversion", "?")
     except Exception:
         rom = "?"
-    if rom == "1.0.24":
-        say("✅", "固件 1.0.24（实测基准版本）")
+    pin = firmware_pin(hw)
+    if pin is None:
+        say("ℹ️", "固件 %s（机型 %s 未收录，无基准可比）" % (rom, hw),
+            "先跑 deploy/device_probe.py 实机校准，再往 panel/device_profile.py 加一行")
+    elif rom == pin:
+        say("✅", "固件 %s（实测基准版本）" % rom)
     else:
-        say("⚠️", "固件 %s（非实测基准 1.0.24）" % rom, "≤1.0.24 理论可用需校准；更高版本解锁可能失效")
+        say("⚠️", "固件 %s（非实测基准 %s）" % (rom, pin),
+            "≤%s 理论可用需校准；更高版本解锁可能失效" % pin)
 
     # 固件升级状态（零凭据）
     try:
         up = json.loads(urllib.request.urlopen(
             "http://%s/cgi-bin/luci/api/xqsystem/upgrade_status" % ip, timeout=3).read())
         if up.get("status") == 0:
-            say("✅", "固件升级状态：无新版本（当前 1.0.24 为最新）")
+            say("✅", "固件升级状态：无新版本")
         else:
             say("⚠️", "固件升级状态异常（status=%s）" % up.get("status"),
                 "可能有新固件推送——升级固件=解锁全部报废，切勿升级；体检 --fix 已关闭自动升级")

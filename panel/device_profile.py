@@ -56,6 +56,16 @@ UNKNOWN_PROFILE = {"name": "未知型号", "ssh_rsa_only": False, "led_ctl": Fal
 _KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)='?([^']*)'?\s*$")
 
 
+def _lookup(hardware):
+    """按机型取能力表条目。同一设备在不同采集来源下大小写不一致（`nvram get model`
+    与 init_info 给 RN07，管理页指纹给 rn07），故按忽略大小写匹配。"""
+    want = (hardware or "").strip().upper()
+    for key, prof in DEVICE_PROFILES.items():
+        if key.upper() == want:
+            return prof
+    return None
+
+
 def parse_device_profile(device_info_text, hardware_code, uname_text=""):
     """解析设备标识并映射能力表。纯函数可单测。
     device_info_text: /etc/device_info 原文（KEY='value' 行）
@@ -66,9 +76,10 @@ def parse_device_profile(device_info_text, hardware_code, uname_text=""):
         if m:
             info[m.group(1)] = m.group(2)
     hw = (hardware_code or "").strip()
-    prof = dict(DEVICE_PROFILES.get(hw) or UNKNOWN_PROFILE)
+    entry = _lookup(hw)
+    prof = dict(entry or UNKNOWN_PROFILE)
     prof["hardware"] = hw or "(未知)"
-    prof["verified"] = hw in DEVICE_PROFILES
+    prof["verified"] = entry is not None
     return {"hardware": hw, "device_info": info, "uname": (uname_text or "").strip(),
             "profile": prof}
 
@@ -80,3 +91,10 @@ def collect(sh):
         sh("cat /etc/device_info 2>/dev/null"),
         sh(HW_CMD),
         sh("uname -a 2>/dev/null"))
+
+
+def firmware_pin(hardware):
+    """该机型的实测基准固件版本，全仓唯一取值入口。
+    机型未收录返回 None——调用方须报"无基准可比"，不得拿别机型的版本判定。"""
+    prof = _lookup(hardware)
+    return prof.get("firmware_pin") if prof else None

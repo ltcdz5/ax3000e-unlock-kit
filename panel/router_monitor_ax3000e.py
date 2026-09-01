@@ -1184,7 +1184,13 @@ def get_health():
     try:
         info = json.loads(seg(0))
         rv = info.get("romversion", "?")
-        add("✅" if rv == "1.0.24" else "⚠️", "固件版本", "%s（%s）" % (rv, "实测基准" if rv == "1.0.24" else "校准后可用"))
+        pin = device_profile.firmware_pin(info.get("hardware"))
+        if pin is None:
+            add("ℹ️", "固件版本", "%s（机型未收录，无基准可比）" % rv)
+        elif rv == pin:
+            add("✅", "固件版本", "%s（实测基准）" % rv)
+        else:
+            add("⚠️", "固件版本", "%s（非实测基准 %s，校准后可用）" % (rv, pin))
         if seg(1):
             u = json.loads(seg(1))
             add("✅" if u.get("status") == 0 else "⚠️", "固件升级",

@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """本地单元测试（不连路由器）：注入拒绝 / 恢复白名单 / 内联转义 / 认证门禁。"""
+import glob
 import importlib.util
+import json
 import os
+import re
 import sys
 
 import pytest
@@ -97,6 +100,78 @@ def test_kit_version_has_single_source():
     for filename in ("kit_doctor.py", "migration_pack.py"):
         tool = _load_tool(filename[:-3] + "_ver_ut", filename)
         assert tool.KIT_VERSION == mw.KIT_VERSION, filename + " 自带了 KIT_VERSION 常量"
+
+
+# ---------- 实测基准固件版本：按机型查表，不得写死 ----------
+
+_FW_COMPARE_RE = re.compile(r"""[=!]=\s*["']\d+\.\d+\.\d+["']|["']\d+\.\d+\.\d+["']\s*[=!]=""")
+
+
+def test_firmware_pin_is_per_model_and_none_when_unlisted():
+    assert dp.firmware_pin("RN07") == "1.0.24"
+    assert dp.firmware_pin("BE3600") == "1.0.81"
+    assert dp.firmware_pin("XX99") is None          # 未收录=无基准可比，不得借用别机型的版本
+    assert dp.firmware_pin("") is None
+    assert dp.firmware_pin(None) is None
+    assert dp.firmware_pin("rn07") == "1.0.24"      # 管理页指纹给的是小写
+    assert dp.firmware_pin(" be3600 ") == "1.0.81"  # 采集串常带首尾空白
+
+
+def test_lowercase_fingerprint_is_still_a_verified_model():
+    """机型标识大小写因采集来源而异（nvram=RN07，管理页指纹=rn07）；
+    按大小写敏感查表会把已知机型降级成"未验证"，功能键与基准判定一起失真。"""
+    r = dp.parse_device_profile("", "rn07")
+    assert r["profile"]["verified"] is True
+    assert r["profile"]["name"] == "小米 AX3000E"
+    assert r["profile"]["hardware"] == "rn07"
+
+
+def _health_sh_returning(hardware, rom):
+    """伪造 get_health 那一次单往返的 7 段输出（假 sh 注入，不碰设备）。"""
+    raw = "@@".join([json.dumps({"hardware": hardware, "romversion": rom}),
+                     json.dumps({"code": 0, "status": 0}),
+                     "0", "2", "y", "/data 1700 584 1016 37% /data", "0"])
+    return lambda cmd, **kw: raw
+
+
+def _firmware_row(panel, hardware, rom):
+    original = panel.sh
+    try:
+        panel.sh = _health_sh_returning(hardware, rom)
+        rows = [i for i in panel.get_health() if i["title"] == "固件版本"]
+    finally:
+        panel.sh = original
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def test_ap_panel_firmware_check_follows_the_device_model():
+    """接 BE3600 却拿 AX3000E 的基准判定，会永远误报"非实测基准"——本轮修的正是这个。"""
+    row = _firmware_row(ap_panel, "BE3600", "1.0.81")
+    assert row["icon"] == "✅" and "实测基准" in row["detail"], row
+    row = _firmware_row(ap_panel, "RN07", "1.0.24")
+    assert row["icon"] == "✅", row
+    row = _firmware_row(ap_panel, "RN07", "1.0.88")            # 真偏离基准才告警
+    assert row["icon"] == "⚠️" and "1.0.24" in row["detail"], row
+    row = _firmware_row(ap_panel, "XX99", "9.9.9")             # 未收录机型不伪装成偏差
+    assert row["icon"] == "ℹ️" and "无基准可比" in row["detail"], row
+
+
+def test_firmware_baseline_is_never_hardcoded_in_a_comparison():
+    """基准版本字面量只允许待在 device_profile 能力表里。
+    挡的是"再抄一份 == 1.0.24"：这种写法曾同时存在于两块面板加一键体检三处。"""
+    scanned = sorted(sum((glob.glob(os.path.join(_ROOT, sub, "*.py"))
+                          for sub in ("panel", "tools", "deploy")), [])
+                     + glob.glob(os.path.join(_ROOT, "router", "*.sh")))
+    names = [os.path.basename(p) for p in scanned]
+    assert len(scanned) >= 12, "扫描范围异常，守卫等于没扫"
+    for anchor in ("router_monitor_ap.py", "router_monitor_ax3000e.py",
+                   "kit_doctor.py", "device_profile.py"):
+        assert anchor in names, anchor + " 未纳入扫描，守卫有盲区"
+    offenders = ["%s:%d %s" % (os.path.basename(p), n, line.strip())
+                 for p in scanned for n, line in enumerate(open(p, encoding="utf-8"), 1)
+                 if _FW_COMPARE_RE.search(line)]
+    assert not offenders, "写死了基准固件版本，应改查 device_profile.firmware_pin：%s" % offenders
 
 
 def test_host_ok_blocks_non_loopback_in_local_mode():
