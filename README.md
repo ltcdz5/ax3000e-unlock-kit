@@ -21,6 +21,7 @@
 panel/    router_monitor_ap.py        AP 面板（核心 + monitor_web.py 服务层 + monitor_page.html 前端）
           router_monitor_ax3000e.py   主路由面板（端口转发/QoS/DHCP/防火墙，安全基线与 AP 面板一致）
           Start-*.bat                 Windows 一键启动器（自动装依赖，见下）
+路由器面板.exe                          AP 模式桌面客户端（源码 desktop/RouterPanel.cs）：自动扫描 + 独立 Edge 窗口 + 关窗即清理
 router/   auto_ssh.sh                 ★ v5 自愈脚本（放 /data/auto_ssh/，install 注册开机钩子）
           configs/                    各配置持久副本（upstreams/noipv6/microsoft/logqueries）
 deploy/   一键部署.bat / .py          SSH 通了以后一键部署 DNS/去广告/自愈
@@ -42,7 +43,7 @@ tools/    unlock_wizard.py            解锁向导（GUI/CLI，自动登录+注�
 
 ## 快速开始
 
-**最简路径**：到 [Releases](../../releases) 下载 zip 解压 → 按第 1 步解锁 → 双击 `panel/` 里对应模式的启动器：
+**最简路径**：到 [Releases](../../releases) 下载 zip 解压 → 按第 1 步解锁 → 双击根目录 `路由器面板.exe`（自动发现路由器 + 输 SSH 密码 + 独立窗口打开面板）。不想用 exe 也可双击 `panel/` 里的 `.bat` 启动器：
 - `Start-AP-panel.bat` —— 中继/AP 模式：WiFi + DNS 去广告 + 监控
 - `Start-MainRouter-panel.bat` —— 主路由模式：另含端口转发 / QoS / DHCP 静态绑定 / 防火墙 / UPnP
 
@@ -91,7 +92,7 @@ Windows 下运行 `deploy/一键部署.bat <IP>`：DNS 上游、anti-AD 去广�
 
 | 模式 | 启动器 | 地址 |
 |---|---|---|
-| 中继/AP（日常推荐） | `panel/Start-AP-panel.bat` | 127.0.0.1:8787 |
+| 中继/AP（日常推荐） | 根目录 `路由器面板.exe`（独立窗口、自动扫描、关窗即清理）或 `panel/Start-AP-panel.bat` | 127.0.0.1:8787 |
 | 主路由（端口转发/QoS/DHCP/防火墙） | `panel/Start-MainRouter-panel.bat` | 127.0.0.1:8788 |
 
 命令行等价：`set ROUTER_PASSWD=密码 && python panel/router_monitor_ap.py`。
