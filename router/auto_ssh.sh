@@ -1,5 +1,7 @@
 #!/bin/sh
-# auto_ssh.sh v6 (2026-08-28) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
+# auto_ssh.sh v7 (2026-09-02) — 轻量化自愈：解锁 SSH + 每次开机只构建一次 DNS 插件
+# v7: 防误升级改用固件自带 otapred 插件的 uci 开关（每次开机压实 auto=0）；
+#     废弃 v6 的 address=/otapred.settings.auto/0.0.0.0 —— 那是把配置项名当域名拦，从不生效。
 # v6: anti-AD 列表 NXDOMAIN 化（0.0.0.0/空地址 → /#，客户端直接放弃不重试，降低查询量）
 # 由 firewall include 触发（每次防火墙重载都会跑），所以必须毫秒级返回。
 # v5: 去广告改为 anti-AD(主) + AWAvenue(国内补充) 双列表，缓存超 48h 自动联网刷新，
@@ -147,8 +149,11 @@ apply_dns() {
     uci set dhcp.@dnsmasq[0].allservers=1 2>/dev/null; uci commit dhcp 2>/dev/null
     # 纯统计日志（不含 log-queries，不记录每个查询，只接 SIGUSR1 转储供面板显示命中率）
     echo 'log-facility=/tmp/dnsquery.log' > /tmp/dnsmasq.d/93-stats.conf
-    # OTA 固件升级黑名单：DNS 黑洞，阻止小米升级服务器连接
-    echo 'address=/otapred.settings.auto/0.0.0.0' > /tmp/dnsmasq.d/99-block-ota.conf
+    # 防误升级：用固件自带的 otapred 插件开关（配置持久化在 /etc/config，每次开机重新压实一次）。
+    # 早先写的 address=/otapred.settings.auto/0.0.0.0 是把 uci 配置项名当域名拦，永远不生效，已废弃。
+    uci get otapred.settings.auto 2>/dev/null | grep -q '^0$' || {
+        uci set otapred.settings.auto=0 2>/dev/null; uci commit otapred 2>/dev/null; }
+    rm -f /tmp/dnsmasq.d/99-block-ota.conf
     [ -s /data/noipv6.conf ]   && cp /data/noipv6.conf   /tmp/dnsmasq.d/92-noipv6.conf
     [ -s /data/logqueries.conf ]&& cp /data/logqueries.conf /tmp/dnsmasq.d/93-logqueries.conf
     [ -s /data/microsoft.conf ] && cp /data/microsoft.conf /tmp/dnsmasq.d/91-microsoft.conf
