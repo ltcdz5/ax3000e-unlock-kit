@@ -63,6 +63,28 @@ def local_subnet():
         return "192.168.2."
 
 
+def local_subnets():
+    """本机全部 IPv4 的 /24 前缀，去重保序：默认出口优先。
+
+    只取默认出口那个网段不够——开着 VPN/TUN 时首选出口是虚拟网卡，
+    真局域网会被整个漏扫，IP 一漂移就找不到设备。
+    """
+    bases = []
+    primary = local_subnet()
+    if primary and primary not in bases:
+        bases.append(primary)
+    ips = set()
+    try:
+        ips.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    for ip in sorted(ips):
+        base = ip.rsplit(".", 1)[0] + "."
+        if base not in bases:
+            bases.append(base)
+    return bases or ["192.168.2."]
+
+
 def fingerprint(ip):
     """返回 hardware 标识（如 RN07），非小米设备返回 None。零凭据。"""
     try:
@@ -79,12 +101,12 @@ def find_router():
         hw = fingerprint(A.ip)
         return (A.ip, hw) if hw else (A.ip, "?")
     cands = ["192.168.31.1", "192.168.2.106", "192.168.2.105", "192.168.2.100"]
-    base = local_subnet()
-    say("ℹ️", "扫描局域网 %s0/24（小米管理页指纹）…" % base)
+    bases = local_subnets()[:3]          # 上限 3 个网段，控制耗时
+    say("ℹ️", "扫描局域网 %s（小米管理页指纹）…" % "、".join(b + "0/24" for b in bases))
+    targets = cands + [b + str(i) for b in bases for i in range(1, 255) if b + str(i) not in cands]
     found = []
     with ThreadPoolExecutor(64) as ex:
-        for ip, hw in zip(cands + [base + str(i) for i in range(1, 255)],
-                          ex.map(fingerprint, cands + [base + str(i) for i in range(1, 255)])):
+        for ip, hw in zip(targets, ex.map(fingerprint, targets)):
             if hw:
                 found.append((ip, hw))
     return found[0] if found else (None, None)
@@ -120,6 +142,65 @@ def parse_dns_servers(ps_output):
             if parts[-1] not in out:
                 out.append(parts[-1])
     return out
+
+
+# 实机结论：本机 dnsmasq 2.86 对 address=/x/# 仍应答黑洞地址（不是 NXDOMAIN）
+BLOCK_ANSWERS = ("0.0.0.0", "::")
+
+
+def parse_ad_domain(list_line):
+    """dnsmasq 列表行 address=/host/# → host；其它格式返回 None。纯函数。"""
+    m = re.match(r"^address=/([^/]+)/", (list_line or "").strip())
+    return m.group(1) if m else None
+
+
+def parse_probe_answers(text):
+    """Resolve-DnsName 输出的逗号分隔应答 → IP 列表（空/噪声条目丢弃）。纯函数。"""
+    return [p.strip() for p in (text or "").split(",") if p.strip()]
+
+
+def adblock_hit(answers):
+    """应答全部落在黑洞地址 → 判定拦截生效；空列表表示没解析出来，不算命中。纯函数。"""
+    return bool(answers) and all(a in BLOCK_ANSWERS for a in answers)
+
+
+def adblock_tally(samples):
+    """多次探针应答 → (落黑洞次数, 有效应答次数)；一次有效应答都没有返回 None。纯函数。"""
+    valid = [s for s in samples if s]
+    if not valid:
+        return None
+    return sum(1 for s in valid if adblock_hit(s)), len(valid)
+
+
+SAFE_DOMAIN = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
+SAFE_SERVER = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def resolve_via(domain, server):
+    """经 server 解析 domain 的 A 记录列表；测不了返回 None。
+
+    用 Resolve-DnsName 而不是 nslookup：中文系统的 nslookup 输出本地化标签，解析不稳。
+    域名/服务器都过白名单再拼命令，避免注入。
+    """
+    if not (domain and SAFE_DOMAIN.match(domain) and server and SAFE_SERVER.match(server)):
+        return None
+    ps = ("(Resolve-DnsName -Name %s -Server %s -Type A -DnsOnly "
+          "-ErrorAction SilentlyContinue | Where-Object IPAddress).IPAddress -join ','" % (domain, server))
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, timeout=20)
+    except Exception:
+        return None
+    answers = parse_probe_answers(r.stdout.decode("utf-8", "replace"))
+    return answers or None
+
+
+def probe_adblock(domain, server, tries=3):
+    """多次实测拦截效果 → (命中次数, 有效次数)；入参非法或全部测不了返回 None。
+
+    单次判定不可靠：实测同一被拦域名经上级网关出现过一次放行、随后多次落黑洞。
+    """
+    return adblock_tally([resolve_via(domain, server) for _ in range(max(1, tries))])
 
 
 def main():
@@ -230,8 +311,24 @@ def main():
                 if ip in servers:
                     say("✅", "去广告 DNS 链路生效（本机 DNS 含 %s）" % ip)
                 elif servers:
-                    say("ℹ️", "去广告链路检测：本机 DNS 是 %s，不含 %s" % ("、".join(servers), ip),
-                        "本机可能有特殊 DNS 配置，其他设备不受影响")
+                    # 本机 DNS 指向上级网关（网关再转发到本机）时，比对 IP 必误报 → 改实测拦截行为
+                    line = ssh_exec(ip, "zcat /data/antiad.gz 2>/dev/null | grep -m1 '^address=/'", A.passwd)
+                    domain = parse_ad_domain(line)
+                    tally = probe_adblock(domain, servers[0]) if domain else None
+                    if tally and tally[0] == tally[1]:
+                        say("✅", "去广告链路实测生效",
+                            "经 %s 解析 %s：%d/%d 次落黑洞" % (servers[0], domain, tally[0], tally[1]))
+                    elif tally and tally[0] == 0:
+                        say("⚠️", "去广告链路未生效",
+                            "经 %s 解析 %s：%d 次全部放行，上级路由 DNS 未转发到 %s" % (servers[0], domain, tally[1], ip))
+                        MANUAL.append("上级路由 DNS 未指向 %s，去广告静默失效" % ip)
+                    elif tally:
+                        say("⚠️", "去广告链路偶发泄漏",
+                            "经 %s 解析 %s：%d/%d 次落黑洞，其余返回真实地址" % (servers[0], domain, tally[0], tally[1]))
+                        MANUAL.append("去广告偶发泄漏（%s 经 %s）：查上级路由是否还有并行上游 DNS" % (domain, servers[0]))
+                    else:
+                        say("ℹ️", "去广告链路未实测：本机 DNS 是 %s，不含 %s" % ("、".join(servers), ip),
+                            "手动确认上级路由 DHCP 的 DNS 已转发到 %s" % ip)
                 else:
                     say("ℹ️", "手动确认：上级路由 DHCP 的 DNS 已指向 %s" % ip, "指错则去广告静默失效")
             else:
