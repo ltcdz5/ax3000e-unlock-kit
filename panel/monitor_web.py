@@ -26,6 +26,14 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 # 套件版本（单一来源，页脚展示；发版时与 release 号同步更新）
 KIT_VERSION = "2.4.0"
 
+
+def _ver_tuple(v):
+    parts = (v or "").strip().split(".")
+    try:
+        return tuple(int(p) for p in parts) if parts else ()
+    except ValueError:
+        return ()
+
 # GitHub API 远程版本缓存（避免每次请求都调用 API）
 _REMOTE_VER = None
 _REMOTE_VER_TS = 0
@@ -213,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/version":
             remote = get_remote_version()
             self._send(200, {"local": KIT_VERSION, "latest": remote or KIT_VERSION,
-                             "update_available": remote is not None and remote != KIT_VERSION})
+                             "update_available": remote is not None and _ver_tuple(remote) > _ver_tuple(KIT_VERSION)})
         elif p.startswith("/download/") and c.get("read_backup"):
             name = urllib.parse.unquote(p[len("/download/"):])
             blob = c["read_backup"](name)
