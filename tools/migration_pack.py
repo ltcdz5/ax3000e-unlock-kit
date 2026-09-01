@@ -101,13 +101,15 @@ def parse_manifest(text):
 def device_meta(sh):
     model = run(sh, "nvram get model 2>/dev/null").strip() or "UNKNOWN"
     fw = run(sh, "cat /etc/xiaoqiang/version 2>/dev/null || nvram get firmware_version 2>/dev/null").strip()
-    ver = run(sh, "grep -m1 'VER=' /data/auto_ssh/auto_ssh.sh 2>/dev/null").strip()
-    return {"model": model, "firmware": fw, "auto_ssh": ver,
+    # 版本写在脚本头注释里：# auto_ssh.sh v6 (2026-08-28)
+    ver = run(sh, "sed -n 2p /data/auto_ssh/auto_ssh.sh 2>/dev/null").strip()
+    return {"model": model, "firmware": fw or "UNKNOWN", "auto_ssh": ver or "UNKNOWN",
             "export_time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "kit_version": KIT_VERSION, "pack_format": PACK_FORMAT}
 
 
 def do_export(ip, passwd, outdir):
+    os.makedirs(outdir, exist_ok=True)   # 先建目录：坏路径要在连设备前就失败，别读完 /data 才崩在最后一步
     log("连接 %s …" % ip)
     sh = connect(ip, passwd)
     try:
