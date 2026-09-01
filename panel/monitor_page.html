@@ -197,11 +197,34 @@ function renderCfg(c){
   desc:'已屏蔽 '+(c.custom_adblock||[]).length+' 个',body:inpRow([inp('ad-domain','例: ads.example.com','180px'),B('ad_custom_add','屏蔽',{},'','')])+lst(cust,'暂无自定义屏蔽')}));
  var w=c.wifi||{};
  var aCh=String(w.a_channel||'0'),gCh=String(w.g_channel||'0');
+ var scanHtml='';
+ var sc=c.wifiscan;
+ if(sc&&(sc['5g']||sc['2g'])){
+  scanHtml='<div style="margin-top:8px">';
+  [['5g','5G'],['2g','2.4G']].forEach(function(p){
+   var r=sc[p[0]];
+   if(!r||!r.candidates||!r.candidates.length){scanHtml+='<div class="desc">'+p[1]+'：未启用或未扫到</div>';return;}
+   var mx=Math.max.apply(null,r.candidates.map(function(x){return x.score;}))||1;
+   var bars=r.candidates.map(function(x){
+     var wp=Math.round(x.score/mx*100),rec=(x.channel===r.rec_channel||x.channel===r.recommended);
+     return '<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:2px 0">'+
+       '<span style="width:34px">ch'+E(String(x.channel))+'</span>'+
+       '<span style="flex:1;background:#2a2f36;border-radius:3px;height:8px;position:relative"><span style="display:block;height:8px;width:'+wp+'%;background:'+(x.score===0?'#3fb950':'#f0883e')+';border-radius:3px"></span></span>'+
+       '<span style="width:52px;color:#7d8896">'+(x.same_ch>0?x.same_ch+' AP':'空闲')+'</span>'+
+       (rec?'<span class="badge on">推荐</span>':'')+
+       (x.channel===r.current?'<span class="badge off">当前</span>':'')+
+     '</div>';
+   }).join('');
+   var act=(r.better&&r.recommended)?B('wifi_channel','应用推荐 ch'+E(String(r.recommended)),{band:p[0],channel:String(r.recommended)},'切到 '+p[1]+' ch'+r.recommended+'（即时，重启恢复）？','green'):'';
+   scanHtml+='<div style="margin:4px 0"><b>'+p[1]+'</b> 当前 ch'+E(String(r.current))+' · '+E(String(r.neighbor_count))+' 邻居 '+act+'</div>'+bars;
+  });
+  scanHtml+='</div>';
+ }
  h.push(card({title:'WiFi 信道',tip:'即时切换不断网；重启后恢复自动。5G 推荐 36/149，2.4G 推荐 1/6/11。',
   desc:'5G: '+E(w.a_ssid)+' 信道'+(aCh==='0'?'自动':aCh)+' · 2.4G: '+E(w.g_ssid)+(String(w.g_disabled)==='1'?' <span class="badge off">已禁用</span>':' 信道'+(gCh==='0'?'自动':gCh)),
   body:inpRow(['5G',sel('a-ch',[36,40,44,48,149,153,157,161],aCh),B('wifi_channel','切换5G信道',{band:'5g',channel:'@a-ch'},'','')])+
-        inpRow(['2.4G',sel('g-ch',[1,6,11,3,9,13],gCh),B('wifi_channel','切换2.4G信道',{band:'2g',channel:'@g-ch'},'','')]),
-  row:B('wifi_scan','扫描信道',{},'扫描当前信道占用情况（约需5秒）','gray')}));
+        inpRow(['2.4G',sel('g-ch',[1,6,11,3,9,13],gCh),B('wifi_channel','切换2.4G信道',{band:'2g',channel:'@g-ch'},'','')])+scanHtml,
+  row:B('wifi_scan','扫描信道',{},'扫描周边 AP 并推荐最干净信道（约需 5-20 秒）','gray')}));
  h.push(card({title:'WiFi 功率',tip:'28dBm 为满功率(约630mW)，按需调低可省电降温。',
   body:inpRow(['5G',sel('a-pw',[28,24,20,16,12],w.a_power||28),B('wifi_power','设5G功率',{band:'5g',power:'@a-pw'},'','')])+
         inpRow(['2.4G',sel('g-pw',[28,24,20,16,12],w.g_power||28),B('wifi_power','设2.4G功率',{band:'2g',power:'@g-pw'},'','')])}));

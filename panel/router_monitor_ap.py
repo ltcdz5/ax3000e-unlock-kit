@@ -11,6 +11,7 @@ from collections import deque
 
 import monitor_web
 import device_profile
+import wifi_scan
 
 HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
 SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
@@ -38,6 +39,9 @@ last_net = {}
 last_stat = {}
 collect_ms = 0
 collect_fails = 0
+
+# 上一次信道扫描结果（内存缓存，供前端渲染候选表；重启面板即清空）
+_WIFI_SCAN = {}
 
 
 def ssh_connect():
@@ -513,6 +517,7 @@ def get_config():
     # 本地历史备份列表（不走 SSH）
     cfg["backups"] = list_backups()
     cfg["adstats"] = get_ad_stats()
+    cfg["wifiscan"] = _WIFI_SCAN
     return cfg
 
 
@@ -852,8 +857,9 @@ def do_action(action, params=None):
         sh("iwconfig " + ifname + " txpower " + pw + "dBm")
         return "WiFi " + band + " 功率已设为 " + pw + " dBm（即时生效，重启恢复）"
     if action == "wifi_scan":
-        raw = sh("for iface in wl0 wl1; do echo ===$iface; iw dev $iface scan 2>/dev/null | grep -E 'freq|signal|SSID' | head -30; done", timeout=20)
-        return raw[:2000] if raw else "扫描无结果"
+        global _WIFI_SCAN
+        _WIFI_SCAN = wifi_scan.collect(sh)
+        return wifi_scan.summary(_WIFI_SCAN)
     if action == "net_test":
         return run_net_test()
     if action == "cron_add":

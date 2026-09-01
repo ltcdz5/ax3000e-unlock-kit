@@ -11,6 +11,7 @@ from collections import deque
 
 import monitor_web
 import device_profile
+import wifi_scan
 
 HOST = os.environ.get("ROUTER_HOST", "192.168.31.1")
 SSHPORT = int(os.environ.get("ROUTER_SSH_PORT", "22"))
@@ -36,6 +37,9 @@ last_net = {}
 last_stat = {}
 collect_ms = 0
 collect_fails = 0
+
+# 上一次信道扫描结果（内存缓存，供前端渲染候选表；重启面板即清空）
+_WIFI_SCAN = {}
 
 
 def ssh_connect():
@@ -328,6 +332,7 @@ def get_config():
                          "proto": d.get("proto", ""), "family": d.get("family", "")})
     cfg["fw_rules"] = fw_rules
     cfg["adstats"] = get_ad_stats()
+    cfg["wifiscan"] = _WIFI_SCAN
     # LED 状态
     cfg["led_blue"] = seg(14) == "1"
     # Guest WiFi 状态
@@ -547,6 +552,10 @@ def do_action(action, params=None):
             sh("uci delete firewall.@redirect[" + idx + "]; uci commit firewall; fw3 reload 2>/dev/null")
             return "端口转发已删除 #" + idx
         return "无效 ID"
+    if action == "wifi_scan":
+        global _WIFI_SCAN
+        _WIFI_SCAN = wifi_scan.collect(sh)
+        return wifi_scan.summary(_WIFI_SCAN)
     if action == "wifi_channel":
         band = str(params.get("band", "5g")).strip().lower()
         ch = str(params.get("channel", "0")).strip()
@@ -982,12 +991,12 @@ document.addEventListener('click',function(e){
  var b=e.target.closest('[data-act]');
  if(!b||b.disabled)return;
  var params={};
- ['server','domain','id','size'].forEach(function(k){if(b.dataset[k])params[k]=b.dataset[k];});
+ ['server','domain','id','size','band','channel'].forEach(function(k){if(b.dataset[k])params[k]=b.dataset[k];});
  ['inp','inp2','inp3','inp4','inp5'].forEach(function(k){
   if(b.dataset[k]){var el=document.getElementById(b.dataset[k]);if(el)params[k.replace('inp','')]=el.value;}
  });
  var actName=b.dataset.act;
- var LONG={antiad_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',dnsmasq_restart:'重启中…',backup:'备份中…',restore:'恢复中…'};
+ var LONG={antiad_update:'更新中…',adblock_update:'更新中…',dns_fastest:'测速优选中…',dns_speedtest:'测速中…',dns_cache_tune:'优化中…',dnsmasq_restart:'重启中…',wifi_scan:'扫描中…',backup:'备份中…',restore:'恢复中…'};
  var busy=LONG[actName];
  if(b.dataset.confirm){if(confirm(b.dataset.confirm)){if(b.dataset.confirmValue)params.confirm=b.dataset.confirmValue;}else return;}
  if(busy){b.disabled=true;b.dataset.orig=b.textContent;b.textContent=busy;}
@@ -1055,11 +1064,28 @@ function renderCfgBody(d){
   var gchans=[1,6,11,3,9,13];
   for(var gi=0;gi<gchans.length;gi++){var gt=(gi<3)?' (推荐)':'';gsel+='<option value="'+gchans[gi]+'"'+(d.wifi.g_channel===String(gchans[gi])?' selected':'')+'>'+gchans[gi]+gt+'</option>';}
   gsel+='</select>';
+  var sHtml='';
+  var ws=d.wifiscan;
+  if(ws&&(ws['5g']||ws['2g'])){
+    sHtml='<div style="margin-top:8px">';
+    [['5g','5G'],['2g','2.4G']].forEach(function(p){
+      var r=ws[p[0]];
+      if(!r||!r.candidates||!r.candidates.length){sHtml+='<div class="desc">'+p[1]+'：未启用或未扫到</div>';return;}
+      var mx=Math.max.apply(null,r.candidates.map(function(x){return x.score;}))||1;
+      var bars=r.candidates.map(function(x){
+        var wp=Math.round(x.score/mx*100),isRec=(x.channel===r.recommended);
+        return '<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:2px 0"><span style="width:34px">ch'+E(String(x.channel))+'</span><span style="flex:1;background:#2a2f36;height:8px;border-radius:3px"><span style="display:block;height:8px;width:'+wp+'%;background:'+(x.score===0?'#3fb950':'#f0883e')+';border-radius:3px"></span></span><span style="width:52px;color:#7d8896">'+(x.same_ch>0?x.same_ch+' AP':'空闲')+'</span>'+(isRec?'<span class="badge on">推荐</span>':'')+(x.channel===r.current?'<span class="badge off">当前</span>':'')+'</div>';
+      }).join('');
+      var ab=(r.better&&r.recommended)?'<button class="btn green" data-act="wifi_channel" data-band="'+p[0]+'" data-channel="'+r.recommended+'" data-confirm="切到 '+p[1]+' ch'+r.recommended+'（即时，重启恢复）？">应用推荐 ch'+r.recommended+'</button>':'';
+      sHtml+='<div style="margin:4px 0"><b>'+p[1]+'</b> 当前 ch'+E(String(r.current))+' · '+r.neighbor_count+' 邻居 '+ab+'</div>'+bars;
+    });
+    sHtml+='</div>';
+  }
   h+=panel('WiFi 信道','','信道即时切换（官方接口，不断网）。5G 推荐 36/149（避开雷达）；2.4G 推荐 1/6/11。注意：重启后恢复自动，持久设置请在小米管理页。',
     '5G: '+E(d.wifi.a_ssid)+' 当前信道'+(d.wifi.a_channel==='0'?'自动':E(d.wifi.a_channel))+' (频宽160MHz)<br>2.4G: '+E(d.wifi.g_ssid)+' 当前信道'+(d.wifi.g_channel==='0'?'自动':E(d.wifi.g_channel))+'',
     '<div class="row">5G 信道 '+asel+'<button class="btn" data-act="wifi_channel" data-band="5g" data-inp="a-ch">切换5G信道</button></div>'+
-    '<div class="row">2.4G 信道 '+gsel+'<button class="btn" data-act="wifi_channel" data-band="2g" data-inp="g-ch">切换2.4G信道</button></div>',
-    '');
+    '<div class="row">2.4G 信道 '+gsel+'<button class="btn" data-act="wifi_channel" data-band="2g" data-inp="g-ch">切换2.4G信道</button></div>'+sHtml,
+    '<button class="btn gray" data-act="wifi_scan">扫描信道并推荐</button>');
   h+=panel('SSH 解锁',badge(d.ssh),'root · 开机自愈 '+(d.auto_ssh?'已开':'已关')+'。别升级固件（1.0.24）否则全丢。','','','');
   // 设备管理
   var dv='';d.devices.forEach(function(x){dv+='<div class="item"><span class="val">'+E(x.host)+'</span><span class="val">'+E(x.ip)+'</span><span class="val">'+E(x.mac)+'</span>'+btn('唤醒','gray',{act:'wol',mac:x.mac},'发送 WOL 魔术包到 '+E(x.mac)+' 吗？')+'</div>';});
